@@ -1,122 +1,40 @@
 import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
 import './App.css'
 
+type Base = 1 | 2 | 3
+type Result = 'ヒット' | '2塁打' | '3塁打' | 'ホームラン'
+
+const batters = [
+  { name: '田中', pos: 'CF', avg: '.325', line: '5打数 2安打', order: 1 }, { name: '佐藤', pos: 'SS', avg: '.286', line: '4打数 1安打', order: 2 },
+  { name: '鈴木', pos: '3B', avg: '.301', line: '3打数 1安打', order: 3 }, { name: '高橋', pos: '1B', avg: '.278', line: '4打数 1安打', order: 4 }, { name: '伊藤', pos: 'LF', avg: '.250', line: '4打数 1安打', order: 5 },
+]
+const defense = [
+  { name: '渡辺', pos: 'LF', place: 'lf' }, { name: '小林', pos: 'CF', place: 'cf' }, { name: '加藤', pos: 'RF', place: 'rf' }, { name: '中村', pos: '3B', place: 'third' }, { name: '森', pos: 'SS', place: 'ss' }, { name: '石井', pos: '2B', place: 'second' }, { name: '井上', pos: '1B', place: 'first' }, { name: '山田', pos: 'P', place: 'pitcher' }, { name: '岡田', pos: 'C', place: 'catcher' },
+]
+function Avatar({ name, small = false }: { name: string; small?: boolean }) { return <span className={`avatar ${small ? 'small' : ''}`}>{name.slice(0, 1)}</span> }
+
 function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  const [inning, setInning] = useState(3); const [half, setHalf] = useState<'表' | '裏'>('表'); const [balls, setBalls] = useState(2); const [strikes, setStrikes] = useState(1); const [outs, setOuts] = useState(1); const [batterIndex, setBatterIndex] = useState(0); const [awayScore, setAwayScore] = useState(3); const [homeScore, setHomeScore] = useState(1)
+  const [innings, setInnings] = useState<{ away: (number | null)[]; home: (number | null)[] }>({ away: [1, 0, 2, null, null], home: [0, 1, 0, null, null] })
+  const [runners, setRunners] = useState<Partial<Record<Base, string>>>({ 1: '佐藤', 2: '鈴木' }); const [lastResult, setLastResult] = useState(''); const [plays, setPlays] = useState(['3回表　佐藤　四球', '3回表　田中　ヒット', '2回裏　山田　三振', '2回表　鈴木　ホームラン'])
+  const batter = batters[batterIndex]; const resetCount = () => { setBalls(0); setStrikes(0) }; const nextBatter = () => setBatterIndex((i) => (i + 1) % batters.length)
+  const addPlay = (result: string) => { setLastResult(result); setPlays((current) => [`${inning}回${half}　${batter.name}　${result}`, ...current].slice(0, 8)) }
+  const scoreRuns = (runs: number) => { if (!runs) return; if (half === '表') setAwayScore((score) => score + runs); else setHomeScore((score) => score + runs); setInnings((current) => { const key = half === '表' ? 'away' : 'home'; const copy = [...current[key]]; copy[inning - 1] = (copy[inning - 1] ?? 0) + runs; return { ...current, [key]: copy } }) }
+  const changeSide = () => { if (half === '裏') setInning((v) => v + 1); setHalf((v) => v === '表' ? '裏' : '表'); setOuts(0); resetCount(); setRunners({}); setLastResult('') }
+  const recordOut = (result: string) => { addPlay(result); resetCount(); nextBatter(); if (outs === 2) changeSide(); else setOuts((v) => v + 1) }
+  const advanceHit = (bases: number, result: Result) => { const next: Partial<Record<Base, string>> = {}; let runs = 0; ([3, 2, 1] as Base[]).forEach((base) => { const runner = runners[base]; if (!runner) return; if (base + bases > 3) runs += 1; else next[(base + bases) as Base] = runner }); if (bases === 4) runs += 1; else next[bases as Base] = batter.name; scoreRuns(runs); setRunners(next); addPlay(result); resetCount(); nextBatter() }
+  const walk = () => { const next = { ...runners }; let runs = 0; if (next[1]) { if (next[2]) { if (next[3]) runs = 1; next[3] = next[2] }; next[2] = next[1] }; next[1] = batter.name; scoreRuns(runs); setRunners(next); addPlay('四球'); resetCount(); nextBatter() }
+  const pitch = (type: 'ball' | 'strike' | 'foul') => { if (type === 'ball') { if (balls === 3) walk(); else setBalls((v) => v + 1); return }; if (type === 'foul' && strikes === 2) return; if (strikes === 2) recordOut('三振'); else setStrikes((v) => v + 1) }
+  const resetGame = () => { setInning(1); setHalf('表'); setBalls(0); setStrikes(0); setOuts(0); setBatterIndex(0); setAwayScore(0); setHomeScore(0); setInnings({ away: [0, null, null, null, null], home: [0, null, null, null, null] }); setRunners({}); setLastResult(''); setPlays([]) }
+  return <main className="app-shell">
+    <header className="topbar"><div className="brand"><span className="brand-ball">●</span>草野球速報</div><span className="live"><i />LIVE</span></header><div className="game-meta"><span>練習試合</span><span>2026.09.14　多摩川グラウンド</span></div>
+    <section className="scoreboard card"><div className="score-head"><span>第{inning}回{half}</span><strong>試合中</strong></div><div className="score-grid score-label"><span>TEAM</span>{[1,2,3,4,5].map((v) => <span key={v}>{v}</span>)}<span>R</span></div><div className="score-grid"><b className="team-name"><span className="team-dot away" />多摩リバース</b>{innings.away.map((v,i) => <span key={i}>{v ?? '－'}</span>)}<strong>{awayScore}</strong></div><div className="score-grid"><b className="team-name"><span className="team-dot home" />府中フェニックス</b>{innings.home.map((v,i) => <span key={i}>{v ?? '－'}</span>)}<strong>{homeScore}</strong></div></section>
+    <section className="at-bat card"><div className="section-eyebrow">NOW BATTING</div><div className="players-row"><div className="player"><Avatar name={batter.name}/><div><small>{batter.order}番　{batter.pos}</small><h2>{batter.name}</h2><p>打率 <b>{batter.avg}</b></p><p>{batter.line}</p></div></div><div className="versus"><span>VS</span><small>対戦成績</small><b>2打数 1安打</b></div><div className="player pitcher"><Avatar name="山田"/><div><small>P</small><h2>山田</h2><p>防御率 <b>2.45</b></p><p>投球数 48</p></div></div></div><div className="count-row"><Count label="B" active={balls} max={3} tone="ball"/><Count label="S" active={strikes} max={2} tone="strike"/><Count label="O" active={outs} max={3} tone="out"/></div>{lastResult && <div className="result-banner"><span>打席結果</span><strong>{lastResult}</strong></div>}</section>
+    <section className="field-card card"><div className="section-title"><span>守備・出塁状況</span><small>守備：府中フェニックス</small></div><div className="field"><div className="diamond"><i className="base base-2">{runners[2] && <Runner name={runners[2]}/>}</i><i className="base base-3">{runners[3] && <Runner name={runners[3]}/>}</i><i className="base base-1">{runners[1] && <Runner name={runners[1]}/>}</i></div>{defense.map((p) => <div className={`fielder ${p.place}`} key={p.pos}><Avatar name={p.name} small/><span>{p.name}</span><em>{p.pos}</em></div>)}</div></section>
+    <section className="history card"><div className="section-title"><span>試合経過</span><small>新しい順</small></div>{plays.length ? plays.map((play,i) => <div className="play" key={`${play}-${i}`}><span>{play.split('　')[0]}</span><b>{play.split('　').slice(1).join('　')}</b></div>) : <p className="empty">まだ試合経過はありません</p>}</section>
+    <section className="admin card"><div className="admin-heading"><div><span className="section-eyebrow">ADMIN CONTROLS</span><h2>試合を更新</h2></div><button className="reset" onClick={resetGame}>試合をリセット</button></div><p className="admin-current">第{inning}回{half}　<span>{batter.order}番 {batter.name}</span> の打席</p><div className="controls"><div className="control-group"><span>カウント</span><div><button onClick={() => pitch('strike')}>ストライク</button><button onClick={() => pitch('ball')}>ボール</button><button onClick={() => pitch('foul')}>ファウル</button></div></div><div className="control-group"><span>打席結果</span><div><button onClick={() => advanceHit(1,'ヒット')}>ヒット</button><button onClick={() => advanceHit(2,'2塁打')}>2塁打</button><button onClick={() => advanceHit(3,'3塁打')}>3塁打</button><button className="hr" onClick={() => advanceHit(4,'ホームラン')}>HR</button><button onClick={walk}>四球</button><button onClick={() => recordOut('三振')}>三振</button><button onClick={() => recordOut('内野ゴロ')}>内野ゴロ</button><button onClick={() => recordOut('外野フライ')}>外野フライ</button></div></div><div className="side-control"><button onClick={changeSide}>攻守交代</button></div></div></section>
+  </main>
 }
-
+function Count({label,active,max,tone}:{label:string;active:number;max:number;tone:string}) { return <div className="count"><b>{label}</b><span>{Array.from({length:max},(_,i) => <i className={i < active ? tone : ''} key={i}/>)}</span></div> }
+function Runner({name}:{name:string}) { return <span className="runner"><Avatar name={name} small/><b>{name}</b></span> }
 export default App
