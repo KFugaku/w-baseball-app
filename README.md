@@ -37,19 +37,19 @@ npm run lint
 npm run build
 ```
 
-Pull Requestでは同じチェックがGitHub Actionsで実行されます。
+プルリクエストでは同じチェックがGitHub Actionsで実行されます。
 
 ## 開発への参加
 
 このリポジトリでは、個人開発でもチーム開発と同じ流れを採用します。
 
-1. Issueで目的と完了条件を決める
+1. 課題（Issue）で目的と完了条件を決める
 2. `feature/12-short-description` のような作業ブランチを作る
 3. 小さな単位でコミットする
-4. Pull Requestを作成して、仕様・画面・テスト結果を確認する
-5. Squash mergeして作業ブランチを削除する
+4. プルリクエストを作成して、仕様・画面・テスト結果を確認する
+5. 変更を1コミットにまとめてマージし、作業ブランチを削除する
 
-ブランチ名、コミット、Issue、Pull Requestの詳しいルールは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+ブランチ名、コミット、課題、プルリクエストの詳しいルールは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## ドキュメント
 

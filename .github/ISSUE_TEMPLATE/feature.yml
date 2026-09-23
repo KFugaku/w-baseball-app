@@ -1,6 +1,6 @@
 name: 機能追加
 description: 新機能や利用者向け改善を提案する
-title: "[Feature]: "
+title: "[機能追加]: "
 labels:
   - enhancement
 body:
@@ -19,7 +19,7 @@ body:
     id: scope
     attributes:
       label: やること
-      description: このIssueで実装する範囲を書いてください。
+      description: この課題で実装する範囲を書いてください。
     validations:
       required: true
   - type: textarea
