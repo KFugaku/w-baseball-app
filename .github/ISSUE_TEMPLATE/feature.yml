@@ -1,0 +1,49 @@
+name: 機能追加
+description: 新機能や利用者向け改善を提案する
+title: "[機能追加]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        実装前に目的と完了条件をそろえます。未確定の点は「未決事項」に記載してください。
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景・目的
+      description: 誰のどんな課題を解決するかを書いてください。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: やること
+      description: この課題で実装する範囲を書いてください。
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: やらないこと
+      description: 今回の対象外を明確にしてください。
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了条件
+      description: 確認できる条件をチェックリストで書いてください。
+      value: |
+        - [ ] 完了条件を記載する
+        - [ ] 確認方法を記載する
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 画面案・参考資料
+      description: スクリーンショット、リンク、補足があれば追加してください。
+  - type: textarea
+    id: questions
+    attributes:
+      label: 未決事項
+      description: 実装前に決める必要がある点を書いてください。

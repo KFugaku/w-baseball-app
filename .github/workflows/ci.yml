@@ -1,0 +1,37 @@
+name: 品質チェック
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: 静的解析とビルド
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@v7
+
+      - name: Node.jsを準備
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 依存パッケージをインストール
+        run: npm ci
+
+      - name: 静的解析
+        run: npm run lint
+
+      - name: ビルド
+        run: npm run build
