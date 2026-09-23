@@ -1,0 +1,59 @@
+name: 不具合報告
+description: 再現できる不具合を報告する
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 不具合の概要
+      description: 何が問題かを簡潔に書いてください。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: 発生環境
+      options:
+        - PC
+        - スマートフォン
+        - 両方
+        - その他
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: スクリーンショット・ログ
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 修正の完了条件
+      value: |
+        - [ ] 再現手順で問題が発生しない
+        - [ ] 関連する主要操作に後退がない
+    validations:
+      required: true

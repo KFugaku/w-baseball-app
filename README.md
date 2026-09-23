@@ -1,78 +1,61 @@
-# React + TypeScript + Vite
+# 草野球速報（w-baseball）
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+草野球の試合状況を、観戦者と運営者の双方に分かりやすく伝えるためのWebアプリです。試合一覧、スコア、打席結果、守備位置、打順などを一つの画面で確認・更新できます。
 
-Currently, two official plugins are available:
+## 主な機能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 当日の試合一覧と試合ステータスの表示
+- イニング、スコア、ボール・ストライク・アウトの管理
+- 打席結果と試合経過の記録
+- 出場選手、打順、ベンチ、守備位置の管理
+- 閲覧モードと管理者モードの切り替え
 
-## React Compiler
+詳しい仕様は [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) を参照してください。
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+## 技術スタック
 
-Note: This will impact Vite dev & build performances.
-You can also try [the experimental native React Compiler support in plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#rust-react-compiler) by using `compiler: true` in the plugin options instead of using the Babel plugin.
+- React 19
+- TypeScript
+- Vite
+- ESLint
 
-## Expanding the ESLint configuration
+## セットアップ
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Node.js 24系を推奨します。
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm ci
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+ローカルで表示されたURLをブラウザで開きます。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 品質チェック
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm run lint
+npm run build
 ```
+
+Pull Requestでは同じチェックがGitHub Actionsで実行されます。
+
+## 開発への参加
+
+このリポジトリでは、個人開発でもチーム開発と同じ流れを採用します。
+
+1. Issueで目的と完了条件を決める
+2. `feature/12-short-description` のような作業ブランチを作る
+3. 小さな単位でコミットする
+4. Pull Requestを作成して、仕様・画面・テスト結果を確認する
+5. Squash mergeして作業ブランチを削除する
+
+ブランチ名、コミット、Issue、Pull Requestの詳しいルールは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
+## ドキュメント
+
+- [プロダクト仕様](docs/PRODUCT_SPEC.md)
+- [開発・Git運用ルール](CONTRIBUTING.md)
+
+## 現在の位置づけ
+
+現在はフロントエンド上で動作を検証するプロトタイプです。データはブラウザを再読み込みすると初期状態に戻り、管理者認証もデモ用です。本番運用に向けた要件は仕様書の「今後の検討事項」に整理しています。
