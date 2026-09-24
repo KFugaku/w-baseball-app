@@ -18,6 +18,7 @@
 - TypeScript
 - Vite
 - ESLint
+- npm workspaces
 
 ## セットアップ
 
@@ -39,6 +40,18 @@ npm run build
 
 プルリクエストでは同じチェックがGitHub Actionsで実行されます。
 
+## プロジェクト構成
+
+```text
+frontend/              React / TypeScript / Vite のWebクライアント
+backend/               API・サーバー側の実装
+packages/shared/       フロントエンドとバックエンドで共有する型・ドメイン定義
+infra/                 Supabase設定、DBマイグレーション、シードデータ
+docs/                  仕様・設計資料
+```
+
+ルートの `npm run dev`、`npm run lint`、`npm run build` は `frontend/` の同名スクリプトを実行します。詳しい責務は [アーキテクチャ](docs/ARCHITECTURE.md) を参照してください。
+
 ## 開発への参加
 
 このリポジトリでは、個人開発でもチーム開発と同じ流れを採用します。
@@ -54,6 +67,7 @@ npm run build
 ## ドキュメント
 
 - [プロダクト仕様](docs/PRODUCT_SPEC.md)
+- [アーキテクチャ](docs/ARCHITECTURE.md)
 - [開発・Git運用ルール](CONTRIBUTING.md)
 
 ## 現在の位置づけ
