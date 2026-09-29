@@ -19,6 +19,7 @@
 - Vite
 - ESLint
 - npm workspaces
+- Supabase（PostgreSQL。接続設定後に有効）
 
 ## セットアップ
 
@@ -37,6 +38,10 @@ npm run dev
 npm run lint
 npm run build
 ```
+
+## Supabase（任意の初期設定）
+
+データベース接続の初回設定は [infra/supabase/README.md](infra/supabase/README.md) を参照してください。設定前でも、開発中の画面状態はブラウザのlocalStorageへ保存されます。
 
 プルリクエストでは同じチェックがGitHub Actionsで実行されます。
 

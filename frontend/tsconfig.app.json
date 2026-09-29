@@ -20,6 +20,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
+    "paths": {
+      "@w-baseball/shared": ["../packages/shared/src/index.ts"]
+    },
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"]
