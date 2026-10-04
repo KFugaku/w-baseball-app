@@ -2,6 +2,11 @@ import { createClient, type User } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+const authCallbackParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+
+// 招待リンクを開いた直後だけ、パスワード設定画面を自動表示するために保持する。
+// Supabase client がURLハッシュを消す前に読み取る必要がある。
+export const isInviteCallback = authCallbackParams.get('type') === 'invite'
 
 /**
  * ブラウザに置けるのは Publishable key だけ。service_role は絶対に使わない。
@@ -47,6 +52,11 @@ export async function signInWithEmail(email: string, password: string): Promise<
   if (error) throw error
   if (!data.user) throw new Error('ログイン情報を取得できませんでした。')
   return data.user
+}
+
+export async function updatePassword(password: string): Promise<void> {
+  const { error } = await requireSupabase().auth.updateUser({ password })
+  if (error) throw error
 }
 
 export async function signOut(): Promise<void> {
