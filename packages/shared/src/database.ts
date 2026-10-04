@@ -8,6 +8,27 @@ export type TeamSide = 'away' | 'home'
 export type LineupRole = 'starter' | 'bench'
 export type InningHalf = 'top' | 'bottom'
 
+export type ProfileRow = {
+  id: string
+  display_name: string | null
+  last_room_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * ブラウザへ返してよいルーム情報。
+ * room_password_hash はサーバー側の照合専用であり、この型には含めない。
+ */
+export type RoomRow = {
+  id: string
+  owner_id: string | null
+  name: string
+  room_number: string
+  created_at: string
+  updated_at: string
+}
+
 export type TeamRow = {
   id: string
   name: string
@@ -29,6 +50,7 @@ export type PlayerRow = {
 
 export type GameRow = {
   id: string
+  room_id: string
   title: string
   status: GameStatus
   scheduled_at: string | null
