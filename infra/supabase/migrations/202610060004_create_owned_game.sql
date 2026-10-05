@@ -73,7 +73,7 @@ begin
   if normalized_title is null then
     normalized_title := format(
       '第%s試合',
-      (select count(*) + 1 from public.games where room_id = active_room.id)
+      (select count(*) + 1 from public.games as existing_game where existing_game.room_id = active_room.id)
     );
   end if;
 
@@ -82,8 +82,8 @@ begin
   end if;
 
   select id into away_team_id
-  from public.teams
-  where room_id = active_room.id and name = normalized_away_name;
+  from public.teams as existing_team
+  where existing_team.room_id = active_room.id and existing_team.name = normalized_away_name;
 
   if away_team_id is null then
     insert into public.teams (room_id, name, color)
@@ -92,8 +92,8 @@ begin
   end if;
 
   select id into home_team_id
-  from public.teams
-  where room_id = active_room.id and name = normalized_home_name;
+  from public.teams as existing_team
+  where existing_team.room_id = active_room.id and existing_team.name = normalized_home_name;
 
   if home_team_id is null then
     insert into public.teams (room_id, name, color)
