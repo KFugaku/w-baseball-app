@@ -39,3 +39,6 @@ $$;
 
 revoke all on function public.create_owned_room(text, text) from public, anon;
 grant execute on function public.create_owned_room(text, text) to authenticated;
+
+-- PostgRESTに新しいRPCのスキーマを即時再読み込みさせる。
+notify pgrst, 'reload schema';

@@ -10,6 +10,16 @@ export type OwnedRoom = {
   games: ViewerGame[]
 }
 
+export function roomCreationErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (/create_owned_room|schema cache|could not find the function/i.test(error.message)) {
+      return 'ルーム作成機能の準備を反映中です。画面を再読み込みして、もう一度試してください。'
+    }
+    if (/ログインが必要|ルーム名は|ルームパスワードは/i.test(error.message)) return error.message
+  }
+  return 'ルームを作成できませんでした。ログイン状態とSupabaseの設定を確認してください。'
+}
+
 export async function createOwnedRoom(name: string, password: string): Promise<OwnedRoom> {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase接続が未設定です。')
 
