@@ -54,6 +54,32 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return data.user
 }
 
+export type SignUpResult = {
+  user: User | null
+  confirmationRequired: boolean
+}
+
+/** メール確認を有効にしている場合でも、確認後にこのアプリへ戻れるURLを渡す。 */
+export async function signUpWithEmail(email: string, password: string): Promise<SignUpResult> {
+  const { data, error } = await requireSupabase().auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: window.location.origin },
+  })
+  if (error) throw error
+
+  return { user: data.user, confirmationRequired: !data.session }
+}
+
+export async function resendSignUpConfirmation(email: string): Promise<void> {
+  const { error } = await requireSupabase().auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: window.location.origin },
+  })
+  if (error) throw error
+}
+
 export async function updatePassword(password: string): Promise<void> {
   const { error } = await requireSupabase().auth.updateUser({ password })
   if (error) throw error
@@ -78,7 +104,10 @@ export function authErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     if (/invalid login credentials/i.test(error.message)) return 'メールアドレスまたはパスワードが違います。'
     if (/email not confirmed/i.test(error.message)) return '確認メールのリンクを開いてからログインしてください。'
-    return error.message
+    if (/user already registered/i.test(error.message)) return 'このメールアドレスはすでに登録されています。ログインしてください。'
+    if (/password.*should be at least/i.test(error.message)) return 'パスワードは8文字以上で入力してください。'
+    if (/email rate limit exceeded|too many requests/i.test(error.message)) return 'メールの送信回数が上限に達しました。しばらく待ってから再試行してください。'
+    if (/not configured/i.test(error.message)) return error.message
   }
-  return 'ログインに失敗しました。時間をおいて再試行してください。'
+  return '認証に失敗しました。入力内容を確認して、時間をおいて再試行してください。'
 }
