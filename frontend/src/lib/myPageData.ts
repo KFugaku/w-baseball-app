@@ -15,8 +15,8 @@ export function roomCreationErrorMessage(error: unknown): string {
     if (/create_owned_room|schema cache|could not find the function/i.test(error.message)) {
       return 'ルーム作成機能の準備を反映中です。画面を再読み込みして、もう一度試してください。'
     }
-    if (/gen_random_bytes/i.test(error.message)) {
-      return 'ルーム番号の生成設定を更新する必要があります。最新のSQLマイグレーションを実行してください。'
+    if (/gen_random_bytes|gen_salt|crypt\(/i.test(error.message)) {
+      return 'ルーム作成用のデータベース設定を更新する必要があります。最新のSQLマイグレーションを実行してください。'
     }
     if (/ログインが必要|ルーム名は|ルームパスワードは/i.test(error.message)) return error.message
   }
