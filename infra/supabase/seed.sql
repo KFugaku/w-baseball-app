@@ -18,12 +18,12 @@ insert into public.room_credentials (room_id, password_hash) values
   )
 on conflict (room_id) do nothing;
 
-insert into public.teams (id, name, color) values
-  ('00000000-0000-0000-0000-000000000001', '多摩リバース', '#2563eb'),
-  ('00000000-0000-0000-0000-000000000002', '府中フェニックス', '#dc2626'),
-  ('00000000-0000-0000-0000-000000000003', 'チームA', '#475569'),
-  ('00000000-0000-0000-0000-000000000004', 'チームB', '#64748b')
-on conflict (id) do update set name = excluded.name, color = excluded.color;
+insert into public.teams (id, room_id, name, color) values
+  ('00000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '多摩リバース', '#2563eb'),
+  ('00000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', '府中フェニックス', '#dc2626'),
+  ('00000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', 'チームA', '#475569'),
+  ('00000000-0000-0000-0000-000000000004', '30000000-0000-0000-0000-000000000001', 'チームB', '#64748b')
+on conflict (id) do update set room_id = excluded.room_id, name = excluded.name, color = excluded.color;
 
 insert into public.players (id, team_id, last_name, first_name, batting_average) values
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '田中', '太郎', .250),
