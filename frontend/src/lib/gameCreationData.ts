@@ -7,8 +7,7 @@ export type ExistingRoomForGame = {
 }
 
 export type GameCreationInput = {
-  room: ExistingRoomForGame | null
-  newRoom: { name: string; password: string; roomNumber: string } | null
+  room: ExistingRoomForGame
   awayName: string
   awayColor: string
   homeName: string
@@ -35,34 +34,19 @@ function client() {
 
 export function gameCreationErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    if (/ルーム名は|ルームパスワードは|チーム名を|異なるチーム名|試合名は|カラー|ルーム番号を|権限がありません|ログインが必要/i.test(error.message)) {
+    if (/チーム名を|異なるチーム名|試合名は|カラー|権限がありません|ログインが必要/i.test(error.message)) {
       return error.message
     }
-    if (/unique|duplicate|room_number/i.test(error.message)) {
-      return 'ルーム番号が重複しました。新しい番号を発行して、もう一度作成してください。'
-    }
-    if (/create_owned_game|preview_room_number|schema cache|could not find the function/i.test(error.message)) {
+    if (/create_owned_game|schema cache|could not find the function/i.test(error.message)) {
       return '試合作成機能の準備を反映中です。最新のSQLマイグレーションを実行してから、画面を再読み込みしてください。'
     }
   }
   return '試合を作成できませんでした。入力内容とSupabaseの設定を確認してください。'
 }
 
-export async function previewRoomNumber(): Promise<string> {
-  const { data, error } = await client().rpc('preview_room_number')
-  if (error) throw error
-  if (typeof data !== 'string' || !/^\d{8}$/.test(data)) {
-    throw new Error('ルーム番号を発行できませんでした。')
-  }
-  return data
-}
-
 export async function createOwnedGame(input: GameCreationInput): Promise<CreatedOwnedGame> {
   const { data, error } = await client().rpc('create_owned_game', {
-    target_room_id: input.room?.id ?? null,
-    target_room_name: input.newRoom?.name ?? null,
-    target_room_password: input.newRoom?.password ?? null,
-    target_room_number: input.newRoom?.roomNumber ?? null,
+    target_room_id: input.room.id,
     target_title: null,
     target_away_name: input.awayName.trim(),
     target_away_color: input.awayColor,

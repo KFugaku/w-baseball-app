@@ -1,26 +1,12 @@
 -- Issue #23: 所有ルームへ試合を安全に作成する。
--- 既存ルームへの追加と、新規ルーム・試合の同時作成を1トランザクションで行う。
+-- 試合は、画面で開いている所有ルームにだけ追加できる。
 
-create or replace function public.preview_room_number()
-returns text
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です。';
-  end if;
-
-  return public.generate_room_number();
-end;
-$$;
+-- このファイルの旧版（ルーム切替機能を含む）を実行済みでも、安全に置き換える。
+drop function if exists public.preview_room_number();
+drop function if exists public.create_owned_game(uuid, text, text, text, text, text, text, text, text);
 
 create or replace function public.create_owned_game(
   target_room_id uuid,
-  target_room_name text,
-  target_room_password text,
-  target_room_number text,
   target_title text,
   target_away_name text,
   target_away_color text,
@@ -57,6 +43,18 @@ begin
     raise exception 'ログインが必要です。';
   end if;
 
+  if target_room_id is null then
+    raise exception '試合を追加するルームを選択してください。';
+  end if;
+
+  select * into active_room
+  from public.rooms
+  where id = target_room_id and owner_id = auth.uid();
+
+  if not found then
+    raise exception '選択したルームを利用する権限がありません。';
+  end if;
+
   if char_length(normalized_away_name) not between 1 and 80
     or char_length(normalized_home_name) not between 1 and 80 then
     raise exception '先攻・後攻のチーム名を1〜80文字で入力してください。';
@@ -69,38 +67,6 @@ begin
   if normalized_away_color !~ '^#[0-9A-Fa-f]{6}$'
     or normalized_home_color !~ '^#[0-9A-Fa-f]{6}$' then
     raise exception 'チームカラーの形式が正しくありません。';
-  end if;
-
-  if target_room_id is not null then
-    select * into active_room
-    from public.rooms
-    where id = target_room_id and owner_id = auth.uid();
-
-    if not found then
-      raise exception '選択したルームを利用する権限がありません。';
-    end if;
-  else
-    if char_length(trim(coalesce(target_room_name, ''))) not between 1 and 80 then
-      raise exception 'ルーム名は1〜80文字で入力してください。';
-    end if;
-
-    if char_length(coalesce(target_room_password, '')) < 8 then
-      raise exception 'ルームパスワードは8文字以上で入力してください。';
-    end if;
-
-    if coalesce(target_room_number, '') !~ '^[0-9]{8}$' then
-      raise exception 'ルーム番号を発行し直してください。';
-    end if;
-
-    insert into public.rooms (owner_id, name, room_number)
-    values (auth.uid(), trim(target_room_name), target_room_number)
-    returning * into active_room;
-
-    insert into public.room_credentials (room_id, password_hash)
-    values (
-      active_room.id,
-      extensions.crypt(target_room_password, extensions.gen_salt('bf', 12))
-    );
   end if;
 
   normalized_title := nullif(trim(target_title), '');
@@ -165,10 +131,7 @@ begin
 end;
 $$;
 
-revoke all on function public.preview_room_number() from public, anon;
-grant execute on function public.preview_room_number() to authenticated;
-
-revoke all on function public.create_owned_game(uuid, text, text, text, text, text, text, text, text) from public, anon;
-grant execute on function public.create_owned_game(uuid, text, text, text, text, text, text, text, text) to authenticated;
+revoke all on function public.create_owned_game(uuid, text, text, text, text, text) from public, anon;
+grant execute on function public.create_owned_game(uuid, text, text, text, text, text) to authenticated;
 
 notify pgrst, 'reload schema';
