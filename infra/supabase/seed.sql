@@ -1,11 +1,29 @@
 -- 開発用データ。既存の試合一覧と試合詳細を再現できる最小セット。
 
-insert into public.teams (id, name, color) values
-  ('00000000-0000-0000-0000-000000000001', '多摩リバース', '#2563eb'),
-  ('00000000-0000-0000-0000-000000000002', '府中フェニックス', '#dc2626'),
-  ('00000000-0000-0000-0000-000000000003', 'チームA', '#475569'),
-  ('00000000-0000-0000-0000-000000000004', 'チームB', '#64748b')
-on conflict (id) do update set name = excluded.name, color = excluded.color;
+-- パスワードは実行時にランダム値からハッシュ化する。平文の開発用パスワードは置かない。
+insert into public.rooms (id, name, room_number) values
+  (
+    '30000000-0000-0000-0000-000000000001',
+    '開発用ルーム',
+    '00000000'
+  )
+on conflict (id) do update set
+  name = excluded.name,
+  room_number = excluded.room_number;
+
+insert into public.room_credentials (room_id, password_hash) values
+  (
+    '30000000-0000-0000-0000-000000000001',
+    crypt(gen_random_uuid()::text, gen_salt('bf', 12))
+  )
+on conflict (room_id) do nothing;
+
+insert into public.teams (id, room_id, name, color) values
+  ('00000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '多摩リバース', '#2563eb'),
+  ('00000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', '府中フェニックス', '#dc2626'),
+  ('00000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', 'チームA', '#475569'),
+  ('00000000-0000-0000-0000-000000000004', '30000000-0000-0000-0000-000000000001', 'チームB', '#64748b')
+on conflict (id) do update set room_id = excluded.room_id, name = excluded.name, color = excluded.color;
 
 insert into public.players (id, team_id, last_name, first_name, batting_average) values
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '田中', '太郎', .250),
@@ -32,11 +50,14 @@ on conflict (id) do update set
   team_id = excluded.team_id, last_name = excluded.last_name, first_name = excluded.first_name,
   batting_average = excluded.batting_average;
 
-insert into public.games (id, title, status) values
-  ('20000000-0000-0000-0000-000000000001', '第一試合', 'finished'),
-  ('20000000-0000-0000-0000-000000000002', '第二試合', 'live'),
-  ('20000000-0000-0000-0000-000000000003', '第三試合', 'before')
-on conflict (id) do update set title = excluded.title, status = excluded.status;
+insert into public.games (id, room_id, title, status) values
+  ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '第一試合', 'finished'),
+  ('20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', '第二試合', 'live'),
+  ('20000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', '第三試合', 'before')
+on conflict (id) do update set
+  room_id = excluded.room_id,
+  title = excluded.title,
+  status = excluded.status;
 
 insert into public.game_teams (game_id, team_id, side, score) values
   ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'away', 1),
