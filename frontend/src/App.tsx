@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { loadSnapshot, saveSnapshot } from './lib/persistence'
 import './App.css'
 import './Extra.css'
 import './Home.css'
@@ -14,6 +15,26 @@ type Player = Member & { pos: string; avg: string }
 type Team = { name: string; players: Player[]; bench: Player[] }
 type Game = { id: string; title: string; status: '試合終了' | '速報中' | '試合前'; away: string; home: string; awayScore: number | null; homeScore: number | null }
 type Snapshot = { balls:number; strikes:number; outs:number; batter:number; awayScore:number; homeScore:number; runners:Partial<Record<Base,string>>; result:string; plays:string[] }
+type PersistedAppState = {
+ version: 1
+ members: Member[]
+ games: Game[]
+ game: Game | null
+ away: Team
+ home: Team
+ inning: number
+ half: '表' | '裏'
+ balls: number
+ strikes: number
+ outs: number
+ batter: number
+ awayScore: number
+ homeScore: number
+ runners: Partial<Record<Base, string>>
+ result: string
+ plays: string[]
+ history: Snapshot[]
+}
 const positions = ['投','捕','一','二','三','遊','左','中','右','打']
 const slots = ['左','中','右','三','遊','二','一','投','捕']
 const initialMembers: Member[] = [['田中','太郎'],['佐藤','健'],['鈴木','蓮'],['高橋','陸'],['伊藤','翔'],['山本','悠'],['木村','陽'],['吉田','大輝'],['清水','亮'],['渡辺','優'],['小林','海斗'],['加藤','航'],['中村','龍'],['森','拓也'],['石井','駿'],['井上','直人'],['山田','誠'],['岡田','蒼'],['斎藤','颯'],['松本','晴']].map(([last,first],i)=>({id:`m${i}`,last,first}))
@@ -28,6 +49,28 @@ function App() {
  const [game,setGame]=useState<Game|null>(null),[creating,setCreating]=useState(false),[deleteOpen,setDeleteOpen]=useState(false),[setup,setSetup]=useState({away:'チームA',home:'チームB'})
  const [away,setAway]=useState<Team>(()=>makeTeam('多摩リバース',0)),[home,setHome]=useState<Team>(()=>makeTeam('府中フェニックス',9)),[drag,setDrag]=useState<{team:'away'|'home';area:'players'|'bench';index:number}|null>(null),[pick,setPick]=useState<{team:'away'|'home';area:'players'|'bench';index:number}|null>(null)
  const [inning,setInning]=useState(3),[half,setHalf]=useState<'表'|'裏'>('表'),[balls,setBalls]=useState(2),[strikes,setStrikes]=useState(1),[outs,setOuts]=useState(1),[batter,setBatter]=useState(0),[awayScore,setAwayScore]=useState(1),[homeScore,setHomeScore]=useState(3),[runners,setRunners]=useState<Partial<Record<Base,string>>>({1:'佐藤',2:'鈴木'}),[result,setResult]=useState(''),[plays,setPlays]=useState(['3回表','3回表 佐藤 四球','3回表 田中 中安打','2回裏','2回裏 山田 三振']),[resultType,setResultType]=useState<string|null>(null),[history,setHistory]=useState<Snapshot[]>([])
+ const [persistenceReady,setPersistenceReady]=useState(false)
+
+ useEffect(()=>{
+  let cancelled=false
+  const restore=async()=>{
+   const saved=await loadSnapshot<PersistedAppState>()
+   if(!cancelled&&saved?.version===1){
+    setMembers(saved.members);setGames(saved.games);setGame(saved.game);setAway(saved.away);setHome(saved.home);setInning(saved.inning);setHalf(saved.half);setBalls(saved.balls);setStrikes(saved.strikes);setOuts(saved.outs);setBatter(saved.batter);setAwayScore(saved.awayScore);setHomeScore(saved.homeScore);setRunners(saved.runners);setResult(saved.result);setPlays(saved.plays);setHistory(saved.history)
+   }
+   if(!cancelled)setPersistenceReady(true)
+  }
+  void restore()
+  return()=>{cancelled=true}
+ },[])
+
+ useEffect(()=>{
+  if(!persistenceReady)return
+  const timer=window.setTimeout(()=>{
+   void saveSnapshot<PersistedAppState>({version:1,members,games,game,away,home,inning,half,balls,strikes,outs,batter,awayScore,homeScore,runners,result,plays,history})
+  },400)
+  return()=>window.clearTimeout(timer)
+ },[persistenceReady,members,games,game,away,home,inning,half,balls,strikes,outs,batter,awayScore,homeScore,runners,result,plays,history])
  const fallbackPlayer:Player={id:'empty',last:'未設定',first:'',pos:'打',avg:'---'}; const currentBatter=away.players.length?away.players[batter%away.players.length]:fallbackPlayer, pitcher=home.players.find(p=>p.pos==='投')??home.players[0]??fallbackPlayer
  const snapshot=()=>setHistory(h=>[{balls,strikes,outs,batter,awayScore,homeScore,runners:{...runners},result,plays:[...plays]},...h].slice(0,50))
  const undo=()=>{const [previous,...rest]=history;if(!previous)return;setBalls(previous.balls);setStrikes(previous.strikes);setOuts(previous.outs);setBatter(previous.batter);setAwayScore(previous.awayScore);setHomeScore(previous.homeScore);setRunners(previous.runners);setResult(previous.result);setPlays(previous.plays);setHistory(rest);setResultType(null)}

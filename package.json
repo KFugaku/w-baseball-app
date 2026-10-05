@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
-    "frontend"
+    "frontend",
+    "packages/*"
   ],
   "scripts": {
     "dev": "npm --workspace @w-baseball/frontend run dev",
