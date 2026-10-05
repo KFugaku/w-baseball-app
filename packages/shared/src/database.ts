@@ -29,6 +29,16 @@ export type RoomRow = {
   updated_at: string
 }
 
+/**
+ * ルームパスワード照合の成功時だけ、限定RPCから返される情報。
+ * パスワードやハッシュ、閲覧者の識別子は含めない。
+ */
+export type RoomViewSessionRow = {
+  room_id: string
+  room_name: string
+  expires_at: string
+}
+
 export type TeamRow = {
   id: string
   room_id: string
