@@ -18,6 +18,8 @@
 - TypeScript
 - Vite
 - ESLint
+- npm workspaces
+- Supabase（PostgreSQL。接続設定後に有効）
 
 ## セットアップ
 
@@ -37,7 +39,23 @@ npm run lint
 npm run build
 ```
 
+## Supabase（任意の初期設定）
+
+データベース接続の初回設定は [infra/supabase/README.md](infra/supabase/README.md) を参照してください。設定前でも、開発中の画面状態はブラウザのlocalStorageへ保存されます。
+
 プルリクエストでは同じチェックがGitHub Actionsで実行されます。
+
+## プロジェクト構成
+
+```text
+frontend/              React / TypeScript / Vite のWebクライアント
+backend/               API・サーバー側の実装
+packages/shared/       フロントエンドとバックエンドで共有する型・ドメイン定義
+infra/                 Supabase設定、DBマイグレーション、シードデータ
+docs/                  仕様・設計資料
+```
+
+ルートの `npm run dev`、`npm run lint`、`npm run build` は `frontend/` の同名スクリプトを実行します。詳しい責務は [アーキテクチャ](docs/ARCHITECTURE.md) を参照してください。
 
 ## 開発への参加
 
@@ -54,6 +72,7 @@ npm run build
 ## ドキュメント
 
 - [プロダクト仕様](docs/PRODUCT_SPEC.md)
+- [アーキテクチャ](docs/ARCHITECTURE.md)
 - [開発・Git運用ルール](CONTRIBUTING.md)
 
 ## 現在の位置づけ
