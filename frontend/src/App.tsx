@@ -360,7 +360,7 @@ function App() {
     [pick, setPick] = useState<{
       team: "away" | "home";
       area: "players" | "bench";
-      index: number;
+      slotId: string;
     } | null>(null);
   const [inning, setInning] = useState(3),
     [half, setHalf] = useState<"表" | "裏">("表"),
@@ -688,7 +688,14 @@ function App() {
   }, [authReady, persistenceReady, sharedAccessRevision, sharedGameRoute]);
 
   useEffect(() => {
-    if (!authReady || !sharedGameRoute) return;
+    // 管理者はローカルの最新状態を先に表示して保存する。自分の保存通知で
+    // 画面全体を再取得すると、続けて編集中の変更を古い状態で上書きしてしまう。
+    if (
+      !authReady ||
+      !sharedGameRoute ||
+      sharedGameAccess === "owner"
+    )
+      return;
     let timer: number | undefined;
     const unsubscribe = subscribeToGameChanges(sharedGameRoute.gameId, () => {
       if (timer) window.clearTimeout(timer);
@@ -700,7 +707,7 @@ function App() {
       if (timer) window.clearTimeout(timer);
       unsubscribe();
     };
-  }, [authReady, sharedGameRoute]);
+  }, [authReady, sharedGameAccess, sharedGameRoute]);
 
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
   const isBeforeGame = game?.status === "試合前";
@@ -1239,11 +1246,16 @@ function App() {
     const target = team(pick.team),
       key = pick.area,
       list = [...target[key]],
-      old = list[pick.index],
+      slotIndex = list.findIndex((player) => player.id === pick.slotId),
+      old = list[slotIndex],
       players = [...target.players],
       bench = [...target.bench],
       sourcePlayers = players.findIndex((player) => player.id === member.id),
       sourceBench = bench.findIndex((player) => player.id === member.id);
+    if (slotIndex < 0 || !old) {
+      setPick(null);
+      return;
+    }
     if (sourcePlayers >= 0)
       players[sourcePlayers] = {
         id: `slot-${Date.now()}`,
@@ -1254,8 +1266,8 @@ function App() {
       };
     if (sourceBench >= 0) bench.splice(sourceBench, 1);
     if (key === "players")
-      players[pick.index] = { ...member, pos: old.pos, avg: old.avg };
-    else bench[pick.index] = { ...member, pos: old.pos, avg: old.avg };
+      players[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
+    else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
     updateTeam(pick.team, { ...target, players, bench });
     setPick(null);
   };
@@ -1272,15 +1284,16 @@ function App() {
   };
   const addPlayer = (which: "away" | "home") => {
     const t = team(which),
+      slotId = `slot-${crypto.randomUUID()}`,
       player: Player = {
-        id: `slot-${Date.now()}-${which}`,
+        id: slotId,
         last: "選択してください",
         first: "",
         pos: "打",
         avg: "---",
       };
     updateTeam(which, { ...t, players: [...t.players, player] });
-    setPick({ team: which, area: "players", index: t.players.length });
+    setPick({ team: which, area: "players", slotId });
   };
   const dropOnField = (which: TeamSide, pos: string) => {
     if (!drag || drag.team !== which) return;
@@ -2150,9 +2163,12 @@ function App() {
           members={members}
           selectedIds={
             pick
-              ? [team(pick.team)[pick.area][pick.index]?.id].filter(
-                  (id): id is string => Boolean(id),
-                )
+              ? [
+                  ...away.players,
+                  ...away.bench,
+                  ...home.players,
+                  ...home.bench,
+                ].map((player) => player.id)
               : []
           }
           close={() => setPick(null)}
@@ -3382,7 +3398,7 @@ function Lineup({
         {allowMemberChanges && (
           <button
             className="choose-player"
-            onClick={() => setPick({ team: id, area, index: i })}
+            onClick={() => setPick({ team: id, area, slotId: p.id })}
           >
             変更
           </button>
