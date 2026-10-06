@@ -11,6 +11,7 @@ export type ViewerGame = {
   id: string;
   title: string;
   status: "試合前" | "速報中" | "試合終了";
+  scheduledInnings: number;
   away: { name: string; color: string; score: number };
   home: { name: string; color: string; score: number };
 };
@@ -58,6 +59,74 @@ export type GameEventUpdate = {
   description: string;
   state: Required<GameStateUpdate>;
   status: GameRow["status"];
+  revertLastPlateAppearance?: boolean;
+  plateAppearance?: {
+    batter: { key: string; lastName: string; firstName: string };
+    pitcher: { key: string; lastName: string; firstName: string };
+    result: PlateResult;
+    runsBattedIn: number;
+    outsRecorded: number;
+    responsiblePitcherKeys: string[];
+    baseRunnersBefore: number;
+    inning: number;
+    half: "top" | "bottom";
+  };
+};
+
+export type PlateResult =
+  | "single"
+  | "double"
+  | "triple"
+  | "home_run"
+  | "walk"
+  | "hit_by_pitch"
+  | "strikeout"
+  | "groundout"
+  | "flyout"
+  | "lineout"
+  | "sacrifice_fly"
+  | "sacrifice_bunt";
+
+export type PlayerStatistics = {
+  batting: {
+    games: number;
+    at_bats: number;
+    hits: number;
+    home_runs: number;
+    walks: number;
+    hit_by_pitch: number;
+    strikeouts: number;
+    runs_batted_in: number;
+    batting_average: number | null;
+    on_base_percentage: number | null;
+    slugging_percentage: number | null;
+    ops: number | null;
+  };
+  pitching: {
+    appearances: number;
+    outs_recorded: number;
+    wins: number;
+    losses: number;
+    saves: number;
+    holds: number;
+    walks: number;
+    strikeouts: number;
+    hits_allowed: number;
+    earned_runs: number;
+    earned_run_average: number | null;
+  };
+  plate_appearances: {
+    game_id: string;
+    game_title: string;
+    played_at: string;
+    results: {
+      inning: number;
+      half: "top" | "bottom";
+      result: PlateResult;
+      description: string;
+      occurred_at: string;
+    }[];
+  }[];
 };
 
 export type GameEventUpdateResult = {
@@ -90,7 +159,7 @@ async function getGameSummaries(
   const client = requireClient();
   let gameRequest = client
     .from("games")
-    .select("id, room_id, title, status, scheduled_at, created_at, updated_at")
+    .select("id, room_id, title, status, scheduled_innings, scheduled_at, created_at, updated_at")
     .eq("room_id", roomId)
     .order("created_at", { ascending: true });
 
@@ -148,6 +217,7 @@ async function getGameSummaries(
       id: game.id,
       title: game.title,
       status: statusLabels[game.status],
+      scheduledInnings: game.scheduled_innings,
       away: formatTeam("away"),
       home: formatTeam("home"),
     };
@@ -237,6 +307,31 @@ export async function applyGameEvent(
     target_home_score: event.state.home_score,
     target_snapshot: event.state.snapshot,
     target_status: event.status,
+    target_batter: event.plateAppearance
+      ? {
+          key: event.plateAppearance.batter.key,
+          last_name: event.plateAppearance.batter.lastName,
+          first_name: event.plateAppearance.batter.firstName,
+        }
+      : null,
+    target_pitcher: event.plateAppearance
+      ? {
+          key: event.plateAppearance.pitcher.key,
+          last_name: event.plateAppearance.pitcher.lastName,
+          first_name: event.plateAppearance.pitcher.firstName,
+        }
+      : null,
+    target_plate_result: event.plateAppearance?.result ?? null,
+    target_runs_batted_in: event.plateAppearance?.runsBattedIn ?? 0,
+    target_outs_recorded: event.plateAppearance?.outsRecorded ?? 0,
+    target_run_responsible_pitcher_keys:
+      event.plateAppearance?.responsiblePitcherKeys ?? [],
+    target_base_runners_before:
+      event.plateAppearance?.baseRunnersBefore ?? 0,
+    target_revert_last_plate_appearance:
+      event.revertLastPlateAppearance ?? false,
+    target_plate_inning: event.plateAppearance?.inning ?? null,
+    target_plate_half: event.plateAppearance?.half ?? null,
   });
   if (error) throw error;
   const saved = Array.isArray(data) ? data[0] : data;
@@ -244,6 +339,19 @@ export async function applyGameEvent(
     throw new Error("試合更新結果を確認できませんでした。");
   }
   return { revision: saved.revision, updatedAt: saved.updated_at };
+}
+
+/** NPB公式の計算式に沿ってDB側で集計した、ルーム内の選手成績を取得する。 */
+export async function loadPlayerStatistics(
+  roomId: string,
+  playerKey: string,
+): Promise<PlayerStatistics> {
+  const { data, error } = await requireClient().rpc("get_player_statistics", {
+    target_room_id: roomId,
+    target_player_key: playerKey,
+  });
+  if (error) throw error;
+  return data as PlayerStatistics;
 }
 
 /** Realtimeで試合に関係する行が更新されたら、表示を再取得する。 */

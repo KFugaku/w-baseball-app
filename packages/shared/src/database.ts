@@ -51,6 +51,7 @@ export type TeamRow = {
 export type PlayerRow = {
   id: string
   team_id: string | null
+  client_key: string | null
   last_name: string
   first_name: string
   icon_url: string | null
@@ -64,6 +65,7 @@ export type GameRow = {
   room_id: string
   title: string
   status: GameStatus
+  scheduled_innings: number
   scheduled_at: string | null
   created_at: string
   updated_at: string
@@ -123,6 +125,15 @@ export type GameEventRow = {
   event_type: string
   description: string
   batter_id: string | null
+  pitcher_id: string | null
+  batting_side: TeamSide | null
+  plate_result: string | null
+  runs_batted_in: number
+  outs_recorded: number
+  base_runners_before: number
+  away_score_before: number | null
+  home_score_before: number | null
+  reverted_at: string | null
   payload: Record<string, unknown>
   client_event_id: string | null
   occurred_at: string

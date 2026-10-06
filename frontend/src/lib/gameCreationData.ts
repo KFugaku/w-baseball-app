@@ -12,6 +12,7 @@ export type GameCreationInput = {
   awayColor: string
   homeName: string
   homeColor: string
+  scheduledInnings: number
 }
 
 export type CreatedOwnedGame = {
@@ -20,9 +21,17 @@ export type CreatedOwnedGame = {
     id: string
     title: string
     status: '試合前'
+    scheduledInnings: number
     away: { name: string; color: string; score: number }
     home: { name: string; color: string; score: number }
   }
+}
+
+type SupabaseErrorLike = {
+  code?: unknown
+  message?: unknown
+  details?: unknown
+  hint?: unknown
 }
 
 function client() {
@@ -33,13 +42,29 @@ function client() {
 }
 
 export function gameCreationErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    if (/チーム名を|異なるチーム名|試合名は|カラー|権限がありません|ログインが必要/i.test(error.message)) {
-      return error.message
-    }
-    if (/create_owned_game|schema cache|could not find the function/i.test(error.message)) {
-      return '試合作成機能の準備を反映中です。最新のSQLマイグレーションを実行してから、画面を再読み込みしてください。'
-    }
+  const supabaseError =
+      error && typeof error === 'object' ? (error as SupabaseErrorLike) : null,
+    message =
+      error instanceof Error
+        ? error.message
+        : typeof supabaseError?.message === 'string'
+          ? supabaseError.message
+          : '',
+    details =
+      typeof supabaseError?.details === 'string' ? supabaseError.details : '',
+    hint = typeof supabaseError?.hint === 'string' ? supabaseError.hint : '',
+    code = typeof supabaseError?.code === 'string' ? supabaseError.code : '',
+    diagnostic = `${code} ${message} ${details} ${hint}`
+
+  if (/チーム名を|異なるチーム名|試合名は|カラー|権限がありません|ログインが必要/i.test(message)) {
+    return message
+  }
+  if (
+    /PGRST202|create_owned_game|schema cache|could not find the function/i.test(
+      diagnostic,
+    )
+  ) {
+    return '試合作成用SQLが旧版です。202610060010_player_statistics.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
   }
   return '試合を作成できませんでした。入力内容とSupabaseの設定を確認してください。'
 }
@@ -52,6 +77,7 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
     target_away_color: input.awayColor,
     target_home_name: input.homeName.trim(),
     target_home_color: input.homeColor,
+    target_scheduled_innings: input.scheduledInnings,
   })
   if (error) throw error
 
@@ -70,6 +96,7 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
       id: created.game_id,
       title: created.game_title,
       status: '試合前',
+      scheduledInnings: created.scheduled_innings,
       away: { name: created.away_team_name, color: created.away_team_color, score: 0 },
       home: { name: created.home_team_name, color: created.home_team_color, score: 0 },
     },
