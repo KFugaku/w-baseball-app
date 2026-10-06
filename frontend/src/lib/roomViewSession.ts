@@ -94,7 +94,15 @@ export async function startRoomViewSession(
     requested_password: password,
   })
 
-  if (error || !Array.isArray(data) || !data[0]) {
+  if (error) {
+    // 認証失敗だけは意図的に詳細を伏せ、設定・通信エラーは利用者が直せる形で伝える。
+    if (/閲覧認証に失敗しました|閲覧権限を引き継げませんでした/i.test(error.message)) {
+      throw new RoomViewSessionError('invalid')
+    }
+    throw error
+  }
+
+  if (!Array.isArray(data) || !data[0]) {
     throw new RoomViewSessionError('invalid')
   }
 
@@ -137,6 +145,17 @@ export function roomViewSessionErrorMessage(error: unknown): string {
   if (error instanceof RoomViewSessionError) {
     if (error.code === 'expired') return '閲覧期限が切れました。ルーム番号とパスワードをもう一度入力してください。'
     if (error.code === 'unavailable') return '閲覧機能を開始できません。Supabaseの設定を確認してください。'
+  }
+  if (error instanceof Error) {
+    if (/start_room_view_session_with_handoff|schema cache|could not find the function/i.test(error.message)) {
+      return '閲覧認証機能の準備を反映中です。最新のSQLを実行してから、画面を再読み込みしてください。'
+    }
+    if (/permission denied/i.test(error.message)) {
+      return '閲覧認証の権限設定を確認してください。最新のSQLを実行すると修復できます。'
+    }
+    if (/gen_random_bytes|gen_salt|crypt\(/i.test(error.message)) {
+      return '閲覧認証用のデータベース設定を更新する必要があります。最新のSQLを実行してください。'
+    }
   }
   return 'ルーム番号またはパスワードが違います。もう一度入力してください。'
 }
