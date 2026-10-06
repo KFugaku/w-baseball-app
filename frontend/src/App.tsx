@@ -1454,14 +1454,15 @@ function App() {
       if (!dragged) return;
       if (target >= 0) {
         const displaced = players[target],
-          draggedPosition = dragged.pos;
-        [players[activeDrag.index].pos, players[target].pos] = [
-          players[target].pos,
-          players[activeDrag.index].pos,
-        ];
+          draggedPosition = dragged.pos,
+          displacedPosition = displaced.pos;
+        // Keep the original positions for the event record. Mutating the
+        // existing Player objects here made both changes look like no-ops.
+        players[activeDrag.index] = { ...dragged, pos: displacedPosition };
+        players[target] = { ...displaced, pos: draggedPosition };
         recordDefensivePositionChange([
-          { player: dragged, from: draggedPosition, to: displaced.pos },
-          { player: displaced, from: displaced.pos, to: draggedPosition },
+          { player: dragged, from: draggedPosition, to: displacedPosition },
+          { player: displaced, from: displacedPosition, to: draggedPosition },
         ]);
         updateTeam(which, { ...defending, players });
       } else {
@@ -3627,7 +3628,7 @@ function Lineup({
     lockedPositionTimer.current = window.setTimeout(() => {
       setLockedPositionIndex(null);
       lockedPositionTimer.current = null;
-    }, 3000);
+    }, 1500);
   };
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
