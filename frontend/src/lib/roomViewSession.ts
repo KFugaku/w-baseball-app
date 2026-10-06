@@ -6,7 +6,13 @@ const storageKey = 'w-baseball:room-view-session:v1'
 export type RoomViewSession = {
   roomId: string
   roomName: string
+  roomNumber?: string
   expiresAt: string
+  handoffToken?: string
+}
+
+type RoomViewSessionWithHandoff = RoomViewSessionRow & {
+  handoff_token?: string
 }
 
 export class RoomViewSessionError extends Error {
@@ -34,11 +40,13 @@ function readSession(): RoomViewSession | null {
   }
 }
 
-function storeSession(row: RoomViewSessionRow): RoomViewSession {
+function storeSession(row: RoomViewSessionWithHandoff, roomNumber?: string): RoomViewSession {
   const session: RoomViewSession = {
     roomId: row.room_id,
     roomName: row.room_name,
+    roomNumber,
     expiresAt: row.expires_at,
+    handoffToken: row.handoff_token,
   }
   window.sessionStorage.setItem(storageKey, JSON.stringify(session))
   return session
@@ -83,16 +91,50 @@ export async function startRoomViewSession(
   }
 
   await ensureViewerIdentity()
-  const { data, error } = await supabase!.rpc('start_room_view_session', {
+  const { data, error } = await supabase!.rpc('start_room_view_session_with_handoff', {
     requested_room_number: roomNumber,
     requested_password: password,
   })
 
-  if (error || !Array.isArray(data) || !data[0]) {
+  if (error) {
+    // 認証失敗だけは意図的に詳細を伏せ、設定・通信エラーは利用者が直せる形で伝える。
+    if (/閲覧認証に失敗しました|閲覧権限を引き継げませんでした/i.test(error.message)) {
+      throw new RoomViewSessionError('invalid')
+    }
+    throw error
+  }
+
+  if (!Array.isArray(data) || !data[0]) {
     throw new RoomViewSessionError('invalid')
   }
 
-  return storeSession(data[0] as RoomViewSessionRow)
+  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber)
+}
+
+/**
+ * メールログインなどで Auth の利用者IDが切り替わったあと、同じタブの閲覧権限を復元する。
+ * トークンはパスワードではなく、認証時にサーバーが発行した短命のランダム値である。
+ */
+export async function claimRoomViewSession(): Promise<RoomViewSession | null> {
+  const current = readSession()
+  if (!current?.handoffToken || !supabase) return null
+
+  const { data, error } = await supabase.rpc('claim_room_view_session', {
+    target_room_id: current.roomId,
+    provided_handoff_token: current.handoffToken,
+  })
+  if (error || !Array.isArray(data) || !data[0]) throw new RoomViewSessionError('expired')
+
+  return storeSession(
+    { ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken },
+    current.roomNumber,
+  )
+}
+
+/** ログアウト後は匿名Authを発行してから、同じタブの閲覧へ戻す。 */
+export async function restoreRoomViewSessionAfterLogout(): Promise<RoomViewSession | null> {
+  await ensureViewerIdentity()
+  return claimRoomViewSession()
 }
 
 /** 閲覧終了時はサーバー側の権限と、このタブ内の表示情報を両方消す。 */
@@ -108,6 +150,17 @@ export function roomViewSessionErrorMessage(error: unknown): string {
   if (error instanceof RoomViewSessionError) {
     if (error.code === 'expired') return '閲覧期限が切れました。ルーム番号とパスワードをもう一度入力してください。'
     if (error.code === 'unavailable') return '閲覧機能を開始できません。Supabaseの設定を確認してください。'
+  }
+  if (error instanceof Error) {
+    if (/start_room_view_session_with_handoff|schema cache|could not find the function/i.test(error.message)) {
+      return '閲覧認証機能の準備を反映中です。最新のSQLを実行してから、画面を再読み込みしてください。'
+    }
+    if (/permission denied/i.test(error.message)) {
+      return '閲覧認証の権限設定を確認してください。最新のSQLを実行すると修復できます。'
+    }
+    if (/gen_random_bytes|gen_salt|crypt\(/i.test(error.message)) {
+      return '閲覧認証用のデータベース設定を更新する必要があります。最新のSQLを実行してください。'
+    }
   }
   return 'ルーム番号またはパスワードが違います。もう一度入力してください。'
 }

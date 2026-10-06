@@ -111,7 +111,7 @@ begin
   where rooms.room_number = requested_room_number;
 
   if target_room_id is null
-    or crypt(requested_password, target_password_hash) <> target_password_hash then
+    or extensions.crypt(requested_password, target_password_hash) <> target_password_hash then
     perform public.record_room_view_failure(current_viewer_id);
     raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
   end if;
@@ -119,7 +119,7 @@ begin
   insert into public.room_viewer_sessions as sessions
     (viewer_id, room_id, expires_at)
   values (current_viewer_id, target_room_id, session_expiry)
-  on conflict (viewer_id, room_id) do update
+  on conflict on constraint room_viewer_sessions_pkey do update
   set expires_at = excluded.expires_at;
 
   delete from public.room_view_attempts where viewer_id = current_viewer_id;
