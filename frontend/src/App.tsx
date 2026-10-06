@@ -17,7 +17,8 @@ import {
   getGameAccess,
   loadViewerGameDetail,
   loadViewerGames,
-  updateGameState,
+  applyGameEvent,
+  subscribeToGameChanges,
   type GameAccess,
   type ViewerGame,
 } from "./lib/roomViewData";
@@ -256,6 +257,12 @@ function App() {
       Boolean(initialSharedGameRoute),
     ),
     [sharedGameError, setSharedGameError] = useState("");
+  const [gameRevision, setGameRevision] = useState(0);
+  const [gameSyncError, setGameSyncError] = useState("");
+  const [gameSyncTick, setGameSyncTick] = useState(0);
+  const lastGameSyncSignature = useRef<string | null>(null);
+  const gameSyncInFlight = useRef(false);
+  const skipNextGameSync = useRef(false);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
       null,
@@ -557,6 +564,10 @@ function App() {
           nextHome =
             progress.teams?.home ??
             emptyTeam(detail.home.name, detail.home.color);
+        skipNextGameSync.current = true;
+        lastGameSyncSignature.current = null;
+        setGameRevision(detail.state?.revision ?? 0);
+        setGameSyncError("");
         setSharedGameAccess(access);
         setGame(selected);
         setAway(nextAway);
@@ -614,6 +625,21 @@ function App() {
     };
   }, [authReady, persistenceReady, sharedAccessRevision, sharedGameRoute]);
 
+  useEffect(() => {
+    if (!authReady || !sharedGameRoute) return;
+    let timer: number | undefined;
+    const unsubscribe = subscribeToGameChanges(sharedGameRoute.gameId, () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setSharedAccessRevision((value) => value + 1);
+      }, 120);
+    });
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [authReady, sharedGameRoute]);
+
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
   useEffect(() => {
     if (
@@ -623,32 +649,62 @@ function App() {
       game.id !== sharedGameRoute.gameId
     )
       return;
+    const state = {
+      inning,
+      half: half === "表" ? ("top" as const) : ("bottom" as const),
+      balls,
+      strikes,
+      outs,
+      batter_order: batters[half === "表" ? "away" : "home"],
+      away_score: awayScore,
+      home_score: homeScore,
+      snapshot: {
+        version: 1,
+        teams: { away, home },
+        batters,
+        inningScores,
+        runners,
+        result,
+        plays,
+      },
+    };
+    const signature = `${game.id}:${JSON.stringify(state)}`;
+    if (skipNextGameSync.current) {
+      skipNextGameSync.current = false;
+      lastGameSyncSignature.current = signature;
+      return;
+    }
+    if (gameSyncInFlight.current || lastGameSyncSignature.current === signature)
+      return;
     const timer = window.setTimeout(() => {
-      void updateGameState(
-        game.id,
-        {
-          inning,
-          half: half === "表" ? "top" : "bottom",
-          balls,
-          strikes,
-          outs,
-          away_score: awayScore,
-          home_score: homeScore,
-          snapshot: {
-            version: 1,
-            teams: { away, home },
-            batters,
-            inningScores,
-            runners,
-            result,
-            plays,
-          },
-        },
-        { away: awayScore, home: homeScore },
-        game.status === "速報中" ? "live" : undefined,
-      ).catch((error) =>
-        console.warn("試合の進行を保存できませんでした。", error),
-      );
+      gameSyncInFlight.current = true;
+      void applyGameEvent(game.id, {
+        expectedRevision: gameRevision,
+        clientEventId: crypto.randomUUID(),
+        eventType: "state_changed",
+        description: plays[0] ?? "試合状況を更新",
+        state,
+        status: game.status === "試合終了" ? "finished" : "live",
+      })
+        .then((saved) => {
+          lastGameSyncSignature.current = signature;
+          setGameRevision(saved.revision);
+          setGameSyncError("");
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "試合を保存できませんでした。";
+          lastGameSyncSignature.current = signature;
+          setGameSyncError(message);
+          console.warn("試合の進行を保存できませんでした。", error);
+        })
+        .finally(() => {
+          gameSyncInFlight.current = false;
+          // 通信中に続けて操作された場合は、次のrenderで最新状態を送信する。
+          setGameSyncTick((tick) => tick + 1);
+        });
     }, 250);
     return () => window.clearTimeout(timer);
   }, [
@@ -669,6 +725,8 @@ function App() {
     sharedGameAccess,
     sharedGameRoute,
     strikes,
+    gameRevision,
+    gameSyncTick,
   ]);
   const battingSide: TeamSide = half === "表" ? "away" : "home",
     fieldingSide: TeamSide = battingSide === "away" ? "home" : "away",
@@ -1519,6 +1577,7 @@ function App() {
           第{inning}回{half}
         </span>
       </div>
+      {gameSyncError && <p className="error">{gameSyncError}</p>}
       <section className="scoreboard card">
         <div className="score-head">
           <span>

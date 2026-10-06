@@ -23,9 +23,11 @@ export type ViewerGameDetail = ViewerGame & {
     | "balls"
     | "strikes"
     | "outs"
+    | "batter_order"
     | "away_score"
     | "home_score"
     | "snapshot"
+    | "revision"
   > | null;
   events: Pick<
     GameEventRow,
@@ -42,11 +44,26 @@ export type GameStateUpdate = Partial<
     | "balls"
     | "strikes"
     | "outs"
+    | "batter_order"
     | "away_score"
     | "home_score"
     | "snapshot"
   >
 >;
+
+export type GameEventUpdate = {
+  expectedRevision: number;
+  clientEventId: string;
+  eventType: string;
+  description: string;
+  state: Required<GameStateUpdate>;
+  status: GameRow["status"];
+};
+
+export type GameEventUpdateResult = {
+  revision: number;
+  updatedAt: string;
+};
 
 type RemoteGameTeam = Pick<
   GameTeamRow,
@@ -158,7 +175,7 @@ export async function loadViewerGameDetail(
     client
       .from("game_states")
       .select(
-        "inning, half, balls, strikes, outs, away_score, home_score, snapshot",
+        "inning, half, balls, strikes, outs, batter_order, away_score, home_score, snapshot, revision",
       )
       .eq("game_id", gameId)
       .maybeSingle(),
@@ -195,37 +212,91 @@ export async function getGameAccess(
   return data === "owner" || data === "viewer" ? data : null;
 }
 
-/** 所有者だけがRLSを通過できる、共通詳細画面からの試合状況更新。 */
-export async function updateGameState(
+/**
+ * 進行状態・一覧用スコア・イベントをPostgreSQLの1トランザクションで記録する。
+ * revision が一致しない場合はサーバーが更新を拒否するため、別端末との競合で上書きしない。
+ */
+export async function applyGameEvent(
   gameId: string,
-  update: GameStateUpdate,
-  scores?: { away: number; home: number },
-  status?: GameRow["status"],
-): Promise<void> {
+  event: GameEventUpdate,
+): Promise<GameEventUpdateResult> {
   const client = requireClient();
-  const requests: PromiseLike<{ error: unknown }>[] = [
-    client.from("game_states").update(update).eq("game_id", gameId),
-  ];
-
-  // 試合詳細だけでなく、一覧・閲覧者が参照する game_teams にも総得点を保存する。
-  if (scores) {
-    requests.push(
-      client
-        .from("game_teams")
-        .update({ score: scores.away })
-        .eq("game_id", gameId)
-        .eq("side", "away"),
-      client
-        .from("game_teams")
-        .update({ score: scores.home })
-        .eq("game_id", gameId)
-        .eq("side", "home"),
-    );
+  const { data, error } = await client.rpc("apply_game_event", {
+    target_game_id: gameId,
+    expected_revision: event.expectedRevision,
+    target_client_event_id: event.clientEventId,
+    target_event_type: event.eventType,
+    target_description: event.description,
+    target_inning: event.state.inning,
+    target_half: event.state.half,
+    target_balls: event.state.balls,
+    target_strikes: event.state.strikes,
+    target_outs: event.state.outs,
+    target_batter_order: event.state.batter_order,
+    target_away_score: event.state.away_score,
+    target_home_score: event.state.home_score,
+    target_snapshot: event.state.snapshot,
+    target_status: event.status,
+  });
+  if (error) throw error;
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved || typeof saved.revision !== "number" || !saved.updated_at) {
+    throw new Error("試合更新結果を確認できませんでした。");
   }
-  if (status)
-    requests.push(client.from("games").update({ status }).eq("id", gameId));
+  return { revision: saved.revision, updatedAt: saved.updated_at };
+}
 
-  const results = await Promise.all(requests);
-  const failed = results.find((result) => result.error);
-  if (failed?.error) throw failed.error;
+/** Realtimeで試合に関係する行が更新されたら、表示を再取得する。 */
+export function subscribeToGameChanges(
+  gameId: string,
+  onChange: () => void,
+): () => void {
+  if (!isSupabaseConfigured || !supabase) return () => undefined;
+  const client = supabase;
+  const channel = client
+    .channel(`game:${gameId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "games",
+        filter: `id=eq.${gameId}`,
+      },
+      onChange,
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "game_states",
+        filter: `game_id=eq.${gameId}`,
+      },
+      onChange,
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "game_teams",
+        filter: `game_id=eq.${gameId}`,
+      },
+      onChange,
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "game_events",
+        filter: `game_id=eq.${gameId}`,
+      },
+      onChange,
+    )
+    .subscribe();
+  return () => {
+    void client.removeChannel(channel);
+  };
 }
