@@ -111,7 +111,7 @@ begin
   where rooms.room_number = requested_room_number;
 
   if target_room_id is null
-    or crypt(requested_password, target_password_hash) <> target_password_hash then
+    or extensions.crypt(requested_password, target_password_hash) <> target_password_hash then
     perform public.record_room_view_failure(current_viewer_id);
     raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
   end if;

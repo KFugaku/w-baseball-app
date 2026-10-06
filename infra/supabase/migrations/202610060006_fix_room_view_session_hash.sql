@@ -1,14 +1,65 @@
--- Issue #24: 共通試合詳細画面のための閲覧権限引き継ぎと役割判定
---
--- 匿名閲覧中にメールログインすると auth.uid() が変わるため、同じブラウザタブだけが
--- 使える短命・高エントロピーの引継ぎトークンを発行する。パスワードは保存も返却もしない。
+-- Issue #24 follow-up: pgcrypto は extensions スキーマにあるため、SECURITY DEFINER
+-- 関数からはスキーマを明示して呼び出す。既に実行済みの関数を安全に置き換える。
 
-alter table public.room_viewer_sessions
-  add column if not exists handoff_token_hash text;
+create or replace function public.start_room_view_session(
+  requested_room_number text,
+  requested_password text
+)
+returns table (room_id uuid, room_name text, expires_at timestamptz)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_viewer_id uuid := auth.uid();
+  target_room_id uuid;
+  target_room_name text;
+  target_password_hash text;
+  current_lock timestamptz;
+  session_expiry timestamptz := now() + interval '1 hour';
+begin
+  if current_viewer_id is null then
+    raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
+  end if;
 
-create index if not exists room_viewer_sessions_handoff_idx
-  on public.room_viewer_sessions (room_id)
-  where handoff_token_hash is not null;
+  select locked_until into current_lock
+  from public.room_view_attempts
+  where viewer_id = current_viewer_id;
+
+  if current_lock is not null and current_lock > now() then
+    raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
+  end if;
+
+  if requested_room_number !~ '^[0-9]{8}$'
+    or requested_password is null
+    or char_length(requested_password) not between 1 and 200 then
+    perform public.record_room_view_failure(current_viewer_id);
+    raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
+  end if;
+
+  select rooms.id, rooms.name, credentials.password_hash
+    into target_room_id, target_room_name, target_password_hash
+  from public.rooms as rooms
+  join public.room_credentials as credentials on credentials.room_id = rooms.id
+  where rooms.room_number = requested_room_number;
+
+  if target_room_id is null
+    or extensions.crypt(requested_password, target_password_hash) <> target_password_hash then
+    perform public.record_room_view_failure(current_viewer_id);
+    raise exception using errcode = '28000', message = '閲覧認証に失敗しました。';
+  end if;
+
+  insert into public.room_viewer_sessions as sessions
+    (viewer_id, room_id, expires_at)
+  values (current_viewer_id, target_room_id, session_expiry)
+  on conflict (viewer_id, room_id) do update
+  set expires_at = excluded.expires_at;
+
+  delete from public.room_view_attempts where viewer_id = current_viewer_id;
+
+  return query select target_room_id, target_room_name, session_expiry;
+end;
+$$;
 
 create or replace function public.start_room_view_session_with_handoff(
   requested_room_number text,
@@ -37,8 +88,6 @@ begin
 end;
 $$;
 
--- ログイン後またはログアウト後に、同じ端末の閲覧権限を新しいAuth利用者へ引き継ぐ。
--- トークンはハッシュだけを保持するため、DBの値だけでは閲覧権限を再現できない。
 create or replace function public.claim_room_view_session(
   target_room_id uuid,
   provided_handoff_token text
@@ -83,51 +132,5 @@ begin
   return query select target_room_id, target_room_name, original_expiry;
 end;
 $$;
-
--- 画面表示用の役割をサーバー側で判定する。クライアント側のフラグは編集権限に使わない。
-create or replace function public.get_game_access(
-  target_room_id uuid,
-  target_game_id uuid
-)
-returns text
-language plpgsql
-stable
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  if not exists (
-    select 1 from public.games
-    where id = target_game_id and room_id = target_room_id
-  ) then
-    return null;
-  end if;
-
-  if public.is_owned_room(target_room_id) then
-    return 'owner';
-  end if;
-
-  if public.has_active_room_view_session(target_room_id) then
-    return 'viewer';
-  end if;
-
-  return null;
-end;
-$$;
-
-revoke all on function public.start_room_view_session_with_handoff(text, text),
-  public.claim_room_view_session(uuid, text), public.get_game_access(uuid, uuid)
-  from public, anon, authenticated;
-
-grant execute on function public.start_room_view_session_with_handoff(text, text),
-  public.claim_room_view_session(uuid, text), public.get_game_access(uuid, uuid)
-  to authenticated;
-
-comment on function public.start_room_view_session_with_handoff(text, text) is
-  '閲覧認証を開始し、メールログイン後に同じタブでのみ使える引継ぎトークンを返す。';
-comment on function public.claim_room_view_session(uuid, text) is
-  '匿名閲覧の有効期限内の権限を、トークンを所持する同一端末の新しいAuth利用者へ引き継ぐ。';
-comment on function public.get_game_access(uuid, uuid) is
-  '試合詳細に対する現在の役割を owner / viewer / null で返す。';
 
 notify pgrst, 'reload schema';
