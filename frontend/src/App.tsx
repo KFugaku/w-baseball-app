@@ -199,7 +199,7 @@ type PendingPlateAppearance = {
   half: "top" | "bottom";
 };
 type PendingGameEvent = {
-  eventType: "player_substitution";
+  eventType: "player_substitution" | "defensive_position_change";
   description: string;
 };
 const validTeam = (value: unknown): value is Team =>
@@ -659,7 +659,7 @@ function App() {
             : detail.events.length
               ? detail.events.map(
                   (event) =>
-                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? `選手交代: ${event.description}` : event.description}`,
+                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? `選手交代: ${event.description}` : event.event_type === "defensive_position_change" ? `守備変更: ${event.description}` : event.description}`,
                 )
               : [
                   `${detail.state?.inning ?? 1}回${detail.state?.half === "bottom" ? "裏" : "表"}`,
@@ -1258,6 +1258,24 @@ function App() {
     setResultType(null);
     setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
   };
+  const recordDefensivePositionChange = (
+    changes: { player: Player; from: string; to: string }[],
+  ) => {
+    if (!isLiveGame || changes.length === 0) return;
+    const description = changes
+      .filter(({ from, to }) => from !== to)
+      .map(({ player, from, to }) => `${player.last} ${player.first}（${from}→${to}）`)
+      .join(" / ");
+    if (!description) return;
+    const display = `守備変更: ${description}`;
+    pendingGameEvents.current.push({
+      eventType: "defensive_position_change",
+      description,
+    });
+    setResult(display);
+    setResultType(null);
+    setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
+  };
   const move = (
     to: "away" | "home",
     area: "players" | "bench",
@@ -1339,7 +1357,26 @@ function App() {
   ) => {
     const t = team(which),
       list = [...t[area]];
-    list[i] = { ...list[i], pos };
+    const player = list[i];
+    if (!player || player.pos === pos) return;
+    if (area === "players" && positions.slice(0, 9).includes(pos)) {
+      const swappedIndex = list.findIndex(
+        (candidate, index) => index !== i && candidate.pos === pos,
+      );
+      if (swappedIndex >= 0) {
+        const swapped = list[swappedIndex],
+          previousPosition = player.pos;
+        list[i] = { ...player, pos };
+        list[swappedIndex] = { ...swapped, pos: previousPosition };
+        recordDefensivePositionChange([
+          { player, from: previousPosition, to: pos },
+          { player: swapped, from: pos, to: previousPosition },
+        ]);
+      } else {
+        list[i] = { ...player, pos };
+        recordDefensivePositionChange([{ player, from: player.pos, to: pos }]);
+      }
+    } else list[i] = { ...player, pos };
     updateTeam(which, { ...t, [area]: list });
   };
   const addPlayer = (which: "away" | "home") => {
@@ -1362,10 +1399,17 @@ function App() {
       const players = [...defending.players],
         target = players.findIndex((player) => player.pos === pos);
       if (target >= 0) {
+        const dragged = players[drag.index],
+          displaced = players[target],
+          draggedPosition = dragged.pos;
         [players[drag.index].pos, players[target].pos] = [
           players[target].pos,
           players[drag.index].pos,
         ];
+        recordDefensivePositionChange([
+          { player: dragged, from: draggedPosition, to: displaced.pos },
+          { player: displaced, from: displaced.pos, to: draggedPosition },
+        ]);
         updateTeam(which, { ...defending, players });
       }
     } else {
@@ -3009,6 +3053,7 @@ const parseSubstitution = (value: string): SubstitutionDetails | null => {
 };
 function ResultBanner({ result }: { result: string }) {
   const substitution = parseSubstitution(result);
+  const defensiveChange = result.startsWith("守備変更:");
   if (substitution)
     return (
       <div className="result-banner substitution-banner">
@@ -3025,9 +3070,9 @@ function ResultBanner({ result }: { result: string }) {
     );
   return (
     <div
-      className={`result-banner ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
+      className={`result-banner ${defensiveChange ? "defensive-change-banner" : ""} ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
     >
-      <span>打席結果</span>
+      <span>{defensiveChange ? "守備変更" : "打席結果"}</span>
       <strong>{result}</strong>
     </div>
   );
