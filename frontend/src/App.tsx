@@ -298,6 +298,8 @@ function App() {
   const pendingPlateAppearance = useRef<PendingPlateAppearance | null>(null);
   const pendingGameEvents = useRef<PendingGameEvent[]>([]);
   const pendingPlateAppearanceUndo = useRef(false);
+  const inningStartTimer = useRef<number | null>(null);
+  const pendingInningStart = useRef<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
       null,
@@ -398,6 +400,14 @@ function App() {
     [resultType, setResultType] = useState<string | null>(null),
     [history, setHistory] = useState<Snapshot[]>([]);
   const [persistenceReady, setPersistenceReady] = useState(false);
+
+  useEffect(
+    () => () => {
+      if (inningStartTimer.current !== null)
+        window.clearTimeout(inningStartTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -717,6 +727,8 @@ function App() {
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
   const isBeforeGame = game?.status === "試合前";
   const isLiveGame = game?.status === "速報中";
+  const canEditDefense = (side: TeamSide) =>
+    canEditGame && (!isLiveGame || side === fieldingSide);
   const canManageRoster = canEditGame;
   const startDisabledReason = !game
     ? "試合情報を読み込み中です。"
@@ -929,6 +941,11 @@ function App() {
   };
   const finishGame = () => {
     if (!canEditGame || !game || !isLiveGame) return;
+    pendingInningStart.current = null;
+    if (inningStartTimer.current !== null) {
+      window.clearTimeout(inningStartTimer.current);
+      inningStartTimer.current = null;
+    }
     pendingPlateAppearance.current = null;
     setGame((current) =>
       current ? { ...current, status: "試合終了" } : current,
@@ -948,6 +965,11 @@ function App() {
   const undo = () => {
     const [previous, ...rest] = history;
     if (!previous) return;
+    pendingInningStart.current = null;
+    if (inningStartTimer.current !== null) {
+      window.clearTimeout(inningStartTimer.current);
+      inningStartTimer.current = null;
+    }
     pendingPlateAppearance.current = null;
     pendingPlateAppearanceUndo.current = Boolean(
       previous.completedPlateAppearance,
@@ -968,6 +990,7 @@ function App() {
     setResultType(null);
   };
   const log = (text: string) => {
+    pendingInningStart.current = null;
     setResult(text);
     setPlays((p) => [`${inning}回${half} ${currentBatter.last} ${text}`, ...p]);
   };
@@ -1011,7 +1034,7 @@ function App() {
       setBatter(nextBatter);
       return { ...current, [battingSide]: nextBatter };
     });
-  const changeHalf = () => {
+  const changeHalf = (showStartAfterDelay = false) => {
     if (!isLiveGame) return;
     const nextHalf = half === "表" ? "裏" : "表",
       nextInning = half === "裏" ? inning + 1 : inning;
@@ -1027,6 +1050,19 @@ function App() {
     setRunners({});
     setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
+    if (!showStartAfterDelay) return;
+    const token = crypto.randomUUID();
+    pendingInningStart.current = token;
+    if (inningStartTimer.current !== null)
+      window.clearTimeout(inningStartTimer.current);
+    inningStartTimer.current = window.setTimeout(() => {
+      if (pendingInningStart.current !== token) return;
+      const startText = `${nextInning}回${nextHalf}開始`;
+      pendingInningStart.current = null;
+      inningStartTimer.current = null;
+      setResult(startText);
+      setPlays((items) => [startText, ...items]);
+    }, 3000);
   };
   const out = (text: string, plateResult: PlateResult) => {
     if (!isLiveGame) return;
@@ -1035,7 +1071,7 @@ function App() {
     log(text);
     resetCount();
     next();
-    if (outs === 2) changeHalf();
+    if (outs === 2) changeHalf(true);
     else setOuts((o) => o + 1);
     setResultType(null);
   };
@@ -1178,7 +1214,7 @@ function App() {
     log("犠牲フライ");
     resetCount();
     next();
-    if (outs === 2) changeHalf();
+    if (outs === 2) changeHalf(true);
     else setOuts((current) => current + 1);
     setResultType(null);
   };
@@ -1355,6 +1391,7 @@ function App() {
     i: number,
     pos: string,
   ) => {
+    if (!canEditDefense(which)) return;
     const t = team(which),
       list = [...t[area]];
     const player = list[i];
@@ -1393,7 +1430,7 @@ function App() {
     setPick({ team: which, area: "players", slotId });
   };
   const dropOnField = (which: TeamSide, pos: string) => {
-    if (!drag || drag.team !== which) return;
+    if (!drag || drag.team !== which || !canEditDefense(which)) return;
     const defending = team(which);
     if (drag.area === "players") {
       const players = [...defending.players],
@@ -2076,7 +2113,7 @@ function App() {
         team={fieldingTeam}
         teamSide={fieldingSide}
         runners={runners}
-        admin={canEditGame}
+        admin={canEditDefense(fieldingSide)}
         drag={drag}
         setDrag={setDrag}
         dropOnField={dropOnField}
@@ -2087,6 +2124,10 @@ function App() {
         away={away}
         home={home}
         admin={canEditGame}
+        canEditDefense={{
+          away: canEditDefense("away"),
+          home: canEditDefense("home"),
+        }}
         allowMemberChanges={canManageRoster}
         drag={drag}
         setDrag={setDrag}
@@ -3054,6 +3095,7 @@ const parseSubstitution = (value: string): SubstitutionDetails | null => {
 function ResultBanner({ result }: { result: string }) {
   const substitution = parseSubstitution(result);
   const defensiveChange = result.startsWith("守備変更:");
+  const inningStart = /^\d+回[表裏]開始$/.test(result);
   if (substitution)
     return (
       <div className="result-banner substitution-banner">
@@ -3072,7 +3114,9 @@ function ResultBanner({ result }: { result: string }) {
     <div
       className={`result-banner ${defensiveChange ? "defensive-change-banner" : ""} ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
     >
-      <span>{defensiveChange ? "守備変更" : "打席結果"}</span>
+      <span>
+        {defensiveChange ? "守備変更" : inningStart ? "イニング開始" : "打席結果"}
+      </span>
       <strong>{result}</strong>
     </div>
   );
@@ -3450,6 +3494,7 @@ function Lineups({
   away,
   home,
   admin,
+  canEditDefense,
   allowMemberChanges,
   drag,
   setDrag,
@@ -3477,6 +3522,7 @@ function Lineups({
           id="away"
           {...{
             admin,
+            canEditPositions: canEditDefense.away,
             allowMemberChanges,
             drag,
             setDrag,
@@ -3492,6 +3538,7 @@ function Lineups({
           id="home"
           {...{
             admin,
+            canEditPositions: canEditDefense.home,
             allowMemberChanges,
             drag,
             setDrag,
@@ -3510,6 +3557,7 @@ function Lineup({
   team,
   id,
   admin,
+  canEditPositions,
   allowMemberChanges,
   drag,
   setDrag,
@@ -3532,6 +3580,7 @@ function Lineup({
       {admin ? (
         <select
           value={p.pos}
+          disabled={!canEditPositions}
           onChange={(e) => changePosition(id, area, i, e.target.value)}
         >
           {positions.map((pos) => (
