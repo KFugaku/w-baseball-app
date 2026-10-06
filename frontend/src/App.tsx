@@ -198,6 +198,10 @@ type PendingPlateAppearance = {
   inning: number;
   half: "top" | "bottom";
 };
+type PendingGameEvent = {
+  eventType: "player_substitution";
+  description: string;
+};
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
   typeof value === "object" &&
@@ -292,6 +296,7 @@ function App() {
   const gameSyncInFlight = useRef(false);
   const skipNextGameSync = useRef(false);
   const pendingPlateAppearance = useRef<PendingPlateAppearance | null>(null);
+  const pendingGameEvents = useRef<PendingGameEvent[]>([]);
   const pendingPlateAppearanceUndo = useRef(false);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
@@ -654,7 +659,7 @@ function App() {
             : detail.events.length
               ? detail.events.map(
                   (event) =>
-                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.description}`,
+                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? `選手交代: ${event.description}` : event.description}`,
                 )
               : [
                   `${detail.state?.inning ?? 1}回${detail.state?.half === "bottom" ? "裏" : "表"}`,
@@ -756,17 +761,30 @@ function App() {
       lastGameSyncSignature.current = signature;
       return;
     }
-    if (gameSyncInFlight.current || lastGameSyncSignature.current === signature)
+    const hasPendingEvent =
+      pendingGameEvents.current.length > 0 ||
+      pendingPlateAppearance.current !== null ||
+      pendingPlateAppearanceUndo.current;
+    if (
+      gameSyncInFlight.current ||
+      (!hasPendingEvent && lastGameSyncSignature.current === signature)
+    )
       return;
     const timer = window.setTimeout(() => {
       const pending = pendingPlateAppearance.current;
+      const pendingGameEvent = pendingGameEvents.current[0];
       const revertsPlateAppearance = pendingPlateAppearanceUndo.current;
       gameSyncInFlight.current = true;
       void applyGameEvent(game.id, {
         expectedRevision: gameRevision,
         clientEventId: crypto.randomUUID(),
-        eventType: pending?.eventType ?? "state_changed",
-        description: pending?.description ?? plays[0] ?? "試合状況を更新",
+        eventType:
+          pending?.eventType ?? pendingGameEvent?.eventType ?? "state_changed",
+        description:
+          pending?.description ??
+          pendingGameEvent?.description ??
+          plays[0] ??
+          "試合状況を更新",
         state,
         status:
           game.status === "試合終了"
@@ -814,6 +832,9 @@ function App() {
         .finally(() => {
           if (pendingPlateAppearance.current === pending) {
             pendingPlateAppearance.current = null;
+          }
+          if (pendingGameEvents.current[0] === pendingGameEvent) {
+            pendingGameEvents.current.shift();
           }
           if (revertsPlateAppearance) pendingPlateAppearanceUndo.current = false;
           gameSyncInFlight.current = false;
@@ -1218,6 +1239,25 @@ function App() {
       }));
   };
   const team = (which: "away" | "home") => (which === "away" ? away : home);
+  const recordSubstitution = (outgoing: Player, incoming: Player) => {
+    if (
+      !isLiveGame ||
+      outgoing.id === incoming.id ||
+      outgoing.id.startsWith("slot-") ||
+      incoming.id.startsWith("slot-")
+    )
+      return;
+    const position = incoming.pos || outgoing.pos || "打";
+    const description = `${outgoing.last} ${outgoing.first} → ${incoming.last} ${incoming.first}（${position}）`;
+    const display = `選手交代: ${description}`;
+    pendingGameEvents.current.push({
+      eventType: "player_substitution",
+      description,
+    });
+    setResult(display);
+    setResultType(null);
+    setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
+  };
   const move = (
     to: "away" | "home",
     area: "players" | "bench",
@@ -1228,6 +1268,24 @@ function App() {
       dest = team(to),
       fromKey = drag.area,
       destKey = area;
+    if (drag.team === to && fromKey === "bench" && destKey === "players") {
+      const bench = [...from.bench],
+        [incoming] = bench.splice(drag.index, 1),
+        players = [...from.players],
+        outgoing = players[index];
+      if (!incoming) return;
+      if (outgoing) {
+        const replacement = { ...incoming, pos: outgoing.pos, avg: outgoing.avg };
+        players[index] = replacement;
+        bench.push(outgoing);
+        recordSubstitution(outgoing, replacement);
+      } else {
+        players.splice(index, 0, { ...incoming, pos: "打" });
+      }
+      updateTeam(to, { ...from, players, bench });
+      setDrag(null);
+      return;
+    }
     const fromList = [...from[fromKey]],
       [player] = fromList.splice(drag.index, 1);
     const destList =
@@ -1265,9 +1323,11 @@ function App() {
         avg: "---",
       };
     if (sourceBench >= 0) bench.splice(sourceBench, 1);
-    if (key === "players")
-      players[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
-    else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
+    if (key === "players") {
+      const replacement = { ...member, pos: old.pos, avg: old.avg };
+      players[slotIndex] = replacement;
+      recordSubstitution(old, replacement);
+    } else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
     updateTeam(pick.team, { ...target, players, bench });
     setPick(null);
   };
@@ -1315,10 +1375,12 @@ function App() {
       const players = [...defending.players],
         target = players.findIndex((player) => player.pos === pos);
       if (target >= 0) {
-        const [outgoing] = players.splice(target, 1);
+        const outgoing = players[target];
+        const replacement = { ...incoming, pos, avg: outgoing.avg };
+        players[target] = replacement;
         bench.push(outgoing);
-      }
-      players.push({ ...incoming, pos });
+        recordSubstitution(outgoing, replacement);
+      } else players.push({ ...incoming, pos });
       updateTeam(which, { ...defending, players, bench });
     }
     setDrag(null);
@@ -1964,14 +2026,7 @@ function App() {
           <Count label="S" active={strikes} max={2} tone="strike" />
           <Count label="O" active={outs} max={3} tone="out" />
         </div>
-        {result && (
-          <div
-            className={`result-banner ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
-          >
-            <span>打席結果</span>
-            <strong>{result}</strong>
-          </div>
-        )}
+        {result && <ResultBanner result={result} />}
       </section>
       <Field
         team={fieldingTeam}
@@ -2911,7 +2966,24 @@ function Play({
     inning = parts[0],
     name = parts[1] ?? "",
     result = parts.slice(2).join(" "),
-    out = ["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word));
+    out = ["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)),
+    substitution = parseSubstitution(`${name} ${result}`.trim());
+  if (substitution)
+    return (
+      <div className="play substitution-play">
+        <span>{inning}</span>
+        <div className="substitution-play-detail">
+          <small>選手交代・{substitution.position}</small>
+          <div>
+            <Avatar name={substitution.outgoing} small />
+            <b>{substitution.outgoing}</b>
+            <strong className="substitution-arrow">→</strong>
+            <Avatar name={substitution.incoming} small />
+            <b>{substitution.incoming}</b>
+          </div>
+        </div>
+      </div>
+    );
   return (
     <div
       className="play"
@@ -2921,6 +2993,42 @@ function Play({
       <b>
         {name} <em className={out ? "play-out" : "play-hit"}>{result}</em>
       </b>
+    </div>
+  );
+}
+type SubstitutionDetails = {
+  outgoing: string;
+  incoming: string;
+  position: string;
+};
+const parseSubstitution = (value: string): SubstitutionDetails | null => {
+  const match = value.match(/^選手交代:\s*(.+?)\s*→\s*(.+?)（(.+?)）$/);
+  return match
+    ? { outgoing: match[1], incoming: match[2], position: match[3] }
+    : null;
+};
+function ResultBanner({ result }: { result: string }) {
+  const substitution = parseSubstitution(result);
+  if (substitution)
+    return (
+      <div className="result-banner substitution-banner">
+        <span>選手交代</span>
+        <strong>
+          <Avatar name={substitution.outgoing} small />
+          {substitution.outgoing}
+          <b className="substitution-arrow">→</b>
+          <Avatar name={substitution.incoming} small />
+          {substitution.incoming}
+        </strong>
+        <small>{substitution.position}</small>
+      </div>
+    );
+  return (
+    <div
+      className={`result-banner ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
+    >
+      <span>打席結果</span>
+      <strong>{result}</strong>
     </div>
   );
 }

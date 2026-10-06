@@ -32,7 +32,13 @@ export type ViewerGameDetail = ViewerGame & {
   > | null;
   events: Pick<
     GameEventRow,
-    "id" | "sequence" | "inning" | "half" | "description" | "occurred_at"
+    | "id"
+    | "sequence"
+    | "inning"
+    | "half"
+    | "event_type"
+    | "description"
+    | "occurred_at"
   >[];
 };
 
@@ -251,7 +257,7 @@ export async function loadViewerGameDetail(
       .maybeSingle(),
     client
       .from("game_events")
-      .select("id, sequence, inning, half, description, occurred_at")
+      .select("id, sequence, inning, half, event_type, description, occurred_at")
       .eq("game_id", gameId)
       .order("sequence", { ascending: false }),
   ]);
