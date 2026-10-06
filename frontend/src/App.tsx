@@ -63,6 +63,7 @@ import "./RoomAccess.css";
 type Base = 1 | 2 | 3;
 type Member = { id: string; last: string; first: string };
 type Player = Member & { pos: string; avg: string };
+type PlayerProfile = { player: Player; teamName: string };
 type Team = { name: string; color: string; players: Player[]; bench: Player[] };
 type Game = {
   id: string;
@@ -242,6 +243,7 @@ function App() {
       | "room-games"
       | "home"
       | "game"
+      | "player-profile"
       | "viewer-list"
       | "shared-game"
     >(initialSharedGameRoute ? "shared-game" : "entry"),
@@ -249,6 +251,8 @@ function App() {
     [newMember, setNewMember] = useState({ last: "", first: "" });
   const [sharedGameRoute, setSharedGameRouteState] =
     useState<SharedGameRoute | null>(initialSharedGameRoute);
+  const [localPlayerProfile, setLocalPlayerProfile] =
+    useState<PlayerProfile | null>(null);
   const [sharedAccessRevision, setSharedAccessRevision] = useState(0);
   const [sharedGameAccess, setSharedGameAccess] = useState<GameAccess | null>(
       null,
@@ -607,7 +611,15 @@ function App() {
                 ],
         );
         setSharedGameLoading(false);
-        setView("game");
+        const playerExists = [
+          ...nextAway.players,
+          ...nextAway.bench,
+          ...nextHome.players,
+          ...nextHome.bench,
+        ].some((player) => player.id === sharedGameRoute.playerId);
+        setView(
+          sharedGameRoute.playerId && playerExists ? "player-profile" : "game",
+        );
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -1110,6 +1122,43 @@ function App() {
             : "entry",
     );
   };
+  const findPlayerProfile = (playerId: string): PlayerProfile | null => {
+    const awayPlayer = [...away.players, ...away.bench].find(
+      (player) => player.id === playerId,
+    );
+    if (awayPlayer) return { player: awayPlayer, teamName: away.name };
+    const homePlayer = [...home.players, ...home.bench].find(
+      (player) => player.id === playerId,
+    );
+    return homePlayer ? { player: homePlayer, teamName: home.name } : null;
+  };
+  const findPlayerByName = (name: string): PlayerProfile | null =>
+    [...away.players, ...away.bench, ...home.players, ...home.bench]
+      .map((player) => ({
+        player,
+        teamName: [...away.players, ...away.bench].some(
+          (awayPlayer) => awayPlayer.id === player.id,
+        )
+          ? away.name
+          : home.name,
+      }))
+      .find(({ player }) => player.last === name) ?? null;
+  const openPlayerProfile = (profile: PlayerProfile) => {
+    if (sharedGameRoute) {
+      const route = { ...sharedGameRoute, playerId: profile.player.id };
+      setSharedGameRoute(route);
+      setSharedGameRouteState(route);
+    } else setLocalPlayerProfile(profile);
+    setView("player-profile");
+  };
+  const closePlayerProfile = () => {
+    if (sharedGameRoute?.playerId) {
+      window.history.back();
+      return;
+    }
+    setLocalPlayerProfile(null);
+    setView("game");
+  };
   const openGame = (selected: Game) => {
     if (selectedRoom) {
       openSharedGame({ roomId: selectedRoom.id, gameId: selected.id });
@@ -1578,6 +1627,16 @@ function App() {
         onCloseLogout={() => setLogoutOpen(false)}
       />
     );
+  const playerProfile = sharedGameRoute?.playerId
+    ? findPlayerProfile(sharedGameRoute.playerId)
+    : localPlayerProfile;
+  if (view === "player-profile" && playerProfile)
+    return (
+      <PlayerProfileScreen
+        profile={playerProfile}
+        onBack={closePlayerProfile}
+      />
+    );
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -1649,13 +1708,26 @@ function App() {
           <PlayerCard
             player={currentBatter}
             label={`${batters[battingSide] + 1}番`}
+            onOpen={() =>
+              openPlayerProfile({
+                player: currentBatter,
+                teamName: battingTeam.name,
+              })
+            }
           />
           <div className="versus">
             <span>VS</span>
             <small>対戦成績</small>
             <b>2打数 1安打</b>
           </div>
-          <PlayerCard player={pitcher} label="投手" reverse />
+          <PlayerCard
+            player={pitcher}
+            label="投手"
+            reverse
+            onOpen={() =>
+              openPlayerProfile({ player: pitcher, teamName: fieldingTeam.name })
+            }
+          />
         </div>
         <div className="count-row">
           <Count label="B" active={balls} max={3} tone="ball" />
@@ -1676,11 +1748,11 @@ function App() {
         teamSide={fieldingSide}
         runners={runners}
         admin={canEditGame}
-        allowMemberChanges={canManageRoster}
         drag={drag}
         setDrag={setDrag}
         dropOnField={dropOnField}
-        setPick={setPick}
+        findPlayerByName={findPlayerByName}
+        onOpenPlayer={openPlayerProfile}
       />
       <Lineups
         away={away}
@@ -1693,6 +1765,7 @@ function App() {
         setPick={setPick}
         changePosition={changePosition}
         addPlayer={addPlayer}
+        onOpenPlayer={openPlayerProfile}
       />
       <section className="history card">
         <div className="section-title">
@@ -2578,13 +2651,18 @@ function PlayerCard({
   player,
   label,
   reverse = false,
+  onOpen,
 }: {
   player: Player;
   label: string;
   reverse?: boolean;
+  onOpen: () => void;
 }) {
   return (
-    <div className={`player ${reverse ? "pitcher" : ""}`}>
+    <button
+      className={`player player-profile-link ${reverse ? "pitcher" : ""}`}
+      onClick={onOpen}
+    >
       <Avatar name={player.last} />
       <div>
         <small>
@@ -2598,7 +2676,49 @@ function PlayerCard({
         </p>
         <p>5打数 2安打</p>
       </div>
-    </div>
+    </button>
+  );
+}
+function PlayerProfileScreen({
+  profile,
+  onBack,
+}: {
+  profile: PlayerProfile;
+  onBack: () => void;
+}) {
+  const { player, teamName } = profile;
+  return (
+    <main className="app-shell player-profile-screen">
+      <header className="topbar">
+        <button className="back" onClick={onBack}>
+          ‹ 試合画面へ戻る
+        </button>
+        <div className="brand">草野球速報</div>
+        <span className="profile-spacer" />
+      </header>
+      <section className="player-profile-card card">
+        <span className="section-eyebrow">PLAYER PROFILE</span>
+        <div className="player-profile-identity">
+          <Avatar name={player.last} />
+          <div>
+            <h1>
+              {player.last} {player.first}
+            </h1>
+            <p>{teamName}</p>
+          </div>
+        </div>
+        <dl>
+          <div>
+            <dt>守備位置</dt>
+            <dd>{player.pos}</dd>
+          </div>
+          <div>
+            <dt>打率</dt>
+            <dd>{player.avg}</dd>
+          </div>
+        </dl>
+      </section>
+    </main>
   );
 }
 function Count({
@@ -2628,11 +2748,11 @@ function Field({
   teamSide,
   runners,
   admin,
-  allowMemberChanges,
   drag,
   setDrag,
   dropOnField,
-  setPick,
+  findPlayerByName,
+  onOpenPlayer,
 }: any) {
   return (
     <section className="field-card card">
@@ -2658,13 +2778,17 @@ function Field({
         {([1, 2, 3] as Base[]).map(
           (base) =>
             runners[base] && (
-              <span
+              <button
                 className={`runner runner-base-${base}`}
                 key={`runner-${base}`}
+                onClick={() => {
+                  const profile = findPlayerByName(runners[base]);
+                  if (profile) onOpenPlayer(profile);
+                }}
               >
                 <Avatar name={runners[base]} small />
                 <b>{runners[base]}</b>
-              </span>
+              </button>
             ),
         )}
         {slots.map((pos) => {
@@ -2685,13 +2809,7 @@ function Field({
               onDragOver={(e: any) => admin && e.preventDefault()}
               onDrop={() => drag && dropOnField(teamSide, pos)}
               onClick={() =>
-                allowMemberChanges &&
-                p &&
-                setPick({
-                  team: teamSide,
-                  area: "players",
-                  index: team.players.indexOf(p),
-                })
+                p && onOpenPlayer({ player: p, teamName: team.name })
               }
             >
               {p ? (
@@ -2721,6 +2839,7 @@ function Lineups({
   setPick,
   changePosition,
   addPlayer,
+  onOpenPlayer,
 }: any) {
   return (
     <section className="lineups card">
@@ -2747,6 +2866,7 @@ function Lineups({
             setPick,
             changePosition,
             addPlayer,
+            onOpenPlayer,
           }}
         />
         <Lineup
@@ -2761,6 +2881,7 @@ function Lineups({
             setPick,
             changePosition,
             addPlayer,
+            onOpenPlayer,
           }}
         />
       </div>
@@ -2778,6 +2899,7 @@ function Lineup({
   setPick,
   changePosition,
   addPlayer,
+  onOpenPlayer,
 }: any) {
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
@@ -2801,15 +2923,22 @@ function Lineup({
       ) : (
         <b>{p.pos}</b>
       )}
-      <button
-        className={admin ? "choose-player" : "plain-player"}
-        disabled={!allowMemberChanges}
-        onClick={() =>
-          allowMemberChanges && setPick({ team: id, area, index: i })
-        }
-      >
-        {p.last} {p.first}
-      </button>
+      <div className="lineup-player-actions">
+        <button
+          className="profile-player"
+          onClick={() => onOpenPlayer({ player: p, teamName: team.name })}
+        >
+          {p.last} {p.first}
+        </button>
+        {allowMemberChanges && (
+          <button
+            className="choose-player"
+            onClick={() => setPick({ team: id, area, index: i })}
+          >
+            変更
+          </button>
+        )}
+      </div>
       <em>{p.avg}</em>
     </div>
   );
