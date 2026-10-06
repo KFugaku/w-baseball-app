@@ -1445,10 +1445,11 @@ function App() {
     const defending = team(which);
     if (activeDrag.area === "players") {
       const players = [...defending.players],
-        target = players.findIndex((player) => player.pos === pos);
+        target = players.findIndex((player) => player.pos === pos),
+        dragged = players[activeDrag.index];
+      if (!dragged) return;
       if (target >= 0) {
-        const dragged = players[activeDrag.index],
-          displaced = players[target],
+        const displaced = players[target],
           draggedPosition = dragged.pos;
         [players[activeDrag.index].pos, players[target].pos] = [
           players[target].pos,
@@ -1457,6 +1458,12 @@ function App() {
         recordDefensivePositionChange([
           { player: dragged, from: draggedPosition, to: displaced.pos },
           { player: displaced, from: displaced.pos, to: draggedPosition },
+        ]);
+        updateTeam(which, { ...defending, players });
+      } else {
+        players[activeDrag.index] = { ...dragged, pos };
+        recordDefensivePositionChange([
+          { player: dragged, from: dragged.pos, to: pos },
         ]);
         updateTeam(which, { ...defending, players });
       }
@@ -3579,6 +3586,7 @@ function Lineup({
   addPlayer,
   onOpenPlayer,
 }: any) {
+  const [showDefenseLockNotice, setShowDefenseLockNotice] = useState(false);
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
       className={`lineup-row ${drag?.team === id && drag.index === i ? "dragging" : ""}`}
@@ -3590,15 +3598,25 @@ function Lineup({
     >
       <span>{area === "players" ? i + 1 : "・"}</span>
       {admin ? (
-        <select
-          value={p.pos}
-          disabled={!canEditPositions}
-          onChange={(e) => changePosition(id, area, i, e.target.value)}
-        >
-          {positions.map((pos) => (
-            <option key={pos}>{pos}</option>
-          ))}
-        </select>
+        canEditPositions ? (
+          <select
+            value={p.pos}
+            onChange={(e) => changePosition(id, area, i, e.target.value)}
+          >
+            {positions.map((pos) => (
+              <option key={pos}>{pos}</option>
+            ))}
+          </select>
+        ) : (
+          <button
+            type="button"
+            className="locked-position"
+            onClick={() => setShowDefenseLockNotice(true)}
+            aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
+          >
+            {p.pos}
+          </button>
+        )
       ) : (
         <b>{p.pos}</b>
       )}
@@ -3622,10 +3640,8 @@ function Lineup({
     </div>
   );
   return (
-    <div
-      className={`team-lineup ${admin && !canEditPositions ? "defense-locked" : ""}`}
-    >
-      {admin && !canEditPositions && (
+    <div className="team-lineup">
+      {admin && !canEditPositions && showDefenseLockNotice && (
         <small className="defense-locked-note">攻撃中：守備変更はできません</small>
       )}
       {team.players.map((p: Player, i: number) => row(p, i, "players"))}
