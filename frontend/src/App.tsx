@@ -198,6 +198,15 @@ type PendingPlateAppearance = {
   inning: number;
   half: "top" | "bottom";
 };
+type PendingGameEvent = {
+  eventType: "player_substitution" | "defensive_position_change";
+  description: string;
+};
+type DragState = {
+  team: "away" | "home";
+  area: "players" | "bench";
+  index: number;
+} | null;
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
   typeof value === "object" &&
@@ -292,7 +301,10 @@ function App() {
   const gameSyncInFlight = useRef(false);
   const skipNextGameSync = useRef(false);
   const pendingPlateAppearance = useRef<PendingPlateAppearance | null>(null);
+  const pendingGameEvents = useRef<PendingGameEvent[]>([]);
   const pendingPlateAppearanceUndo = useRef(false);
+  const inningStartTimer = useRef<number | null>(null);
+  const pendingInningStart = useRef<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
       null,
@@ -352,11 +364,7 @@ function App() {
     [gameTeams, setGameTeams] = useState<
       Record<string, { away: Team; home: Team }>
     >({}),
-    [drag, setDrag] = useState<{
-      team: "away" | "home";
-      area: "players" | "bench";
-      index: number;
-    } | null>(null),
+    [drag, setDragState] = useState<DragState>(null),
     [pick, setPick] = useState<{
       team: "away" | "home";
       area: "players" | "bench";
@@ -393,6 +401,19 @@ function App() {
     [resultType, setResultType] = useState<string | null>(null),
     [history, setHistory] = useState<Snapshot[]>([]);
   const [persistenceReady, setPersistenceReady] = useState(false);
+  const dragRef = useRef<DragState>(null);
+  const setDrag = (value: DragState) => {
+    dragRef.current = value;
+    setDragState(value);
+  };
+
+  useEffect(
+    () => () => {
+      if (inningStartTimer.current !== null)
+        window.clearTimeout(inningStartTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -654,7 +675,7 @@ function App() {
             : detail.events.length
               ? detail.events.map(
                   (event) =>
-                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.description}`,
+                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? `選手交代: ${event.description}` : event.event_type === "defensive_position_change" ? `守備変更: ${event.description}` : event.description}`,
                 )
               : [
                   `${detail.state?.inning ?? 1}回${detail.state?.half === "bottom" ? "裏" : "表"}`,
@@ -712,6 +733,8 @@ function App() {
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
   const isBeforeGame = game?.status === "試合前";
   const isLiveGame = game?.status === "速報中";
+  const canEditDefense = (side: TeamSide) =>
+    canEditGame && (!isLiveGame || side === fieldingSide);
   const canManageRoster = canEditGame;
   const startDisabledReason = !game
     ? "試合情報を読み込み中です。"
@@ -756,17 +779,30 @@ function App() {
       lastGameSyncSignature.current = signature;
       return;
     }
-    if (gameSyncInFlight.current || lastGameSyncSignature.current === signature)
+    const hasPendingEvent =
+      pendingGameEvents.current.length > 0 ||
+      pendingPlateAppearance.current !== null ||
+      pendingPlateAppearanceUndo.current;
+    if (
+      gameSyncInFlight.current ||
+      (!hasPendingEvent && lastGameSyncSignature.current === signature)
+    )
       return;
     const timer = window.setTimeout(() => {
       const pending = pendingPlateAppearance.current;
+      const pendingGameEvent = pendingGameEvents.current[0];
       const revertsPlateAppearance = pendingPlateAppearanceUndo.current;
       gameSyncInFlight.current = true;
       void applyGameEvent(game.id, {
         expectedRevision: gameRevision,
         clientEventId: crypto.randomUUID(),
-        eventType: pending?.eventType ?? "state_changed",
-        description: pending?.description ?? plays[0] ?? "試合状況を更新",
+        eventType:
+          pending?.eventType ?? pendingGameEvent?.eventType ?? "state_changed",
+        description:
+          pending?.description ??
+          pendingGameEvent?.description ??
+          plays[0] ??
+          "試合状況を更新",
         state,
         status:
           game.status === "試合終了"
@@ -814,6 +850,9 @@ function App() {
         .finally(() => {
           if (pendingPlateAppearance.current === pending) {
             pendingPlateAppearance.current = null;
+          }
+          if (pendingGameEvents.current[0] === pendingGameEvent) {
+            pendingGameEvents.current.shift();
           }
           if (revertsPlateAppearance) pendingPlateAppearanceUndo.current = false;
           gameSyncInFlight.current = false;
@@ -908,6 +947,11 @@ function App() {
   };
   const finishGame = () => {
     if (!canEditGame || !game || !isLiveGame) return;
+    pendingInningStart.current = null;
+    if (inningStartTimer.current !== null) {
+      window.clearTimeout(inningStartTimer.current);
+      inningStartTimer.current = null;
+    }
     pendingPlateAppearance.current = null;
     setGame((current) =>
       current ? { ...current, status: "試合終了" } : current,
@@ -927,6 +971,11 @@ function App() {
   const undo = () => {
     const [previous, ...rest] = history;
     if (!previous) return;
+    pendingInningStart.current = null;
+    if (inningStartTimer.current !== null) {
+      window.clearTimeout(inningStartTimer.current);
+      inningStartTimer.current = null;
+    }
     pendingPlateAppearance.current = null;
     pendingPlateAppearanceUndo.current = Boolean(
       previous.completedPlateAppearance,
@@ -947,6 +996,7 @@ function App() {
     setResultType(null);
   };
   const log = (text: string) => {
+    pendingInningStart.current = null;
     setResult(text);
     setPlays((p) => [`${inning}回${half} ${currentBatter.last} ${text}`, ...p]);
   };
@@ -990,7 +1040,7 @@ function App() {
       setBatter(nextBatter);
       return { ...current, [battingSide]: nextBatter };
     });
-  const changeHalf = () => {
+  const changeHalf = (showStartAfterDelay = false) => {
     if (!isLiveGame) return;
     const nextHalf = half === "表" ? "裏" : "表",
       nextInning = half === "裏" ? inning + 1 : inning;
@@ -1006,6 +1056,19 @@ function App() {
     setRunners({});
     setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
+    if (!showStartAfterDelay) return;
+    const token = crypto.randomUUID();
+    pendingInningStart.current = token;
+    if (inningStartTimer.current !== null)
+      window.clearTimeout(inningStartTimer.current);
+    inningStartTimer.current = window.setTimeout(() => {
+      if (pendingInningStart.current !== token) return;
+      const startText = `${nextInning}回${nextHalf}開始`;
+      pendingInningStart.current = null;
+      inningStartTimer.current = null;
+      setResult(startText);
+      setPlays((items) => [startText, ...items]);
+    }, 3000);
   };
   const out = (text: string, plateResult: PlateResult) => {
     if (!isLiveGame) return;
@@ -1014,7 +1077,7 @@ function App() {
     log(text);
     resetCount();
     next();
-    if (outs === 2) changeHalf();
+    if (outs === 2) changeHalf(true);
     else setOuts((o) => o + 1);
     setResultType(null);
   };
@@ -1157,7 +1220,7 @@ function App() {
     log("犠牲フライ");
     resetCount();
     next();
-    if (outs === 2) changeHalf();
+    if (outs === 2) changeHalf(true);
     else setOuts((current) => current + 1);
     setResultType(null);
   };
@@ -1218,25 +1281,83 @@ function App() {
       }));
   };
   const team = (which: "away" | "home") => (which === "away" ? away : home);
+  const recordSubstitution = (outgoing: Player, incoming: Player) => {
+    if (
+      !isLiveGame ||
+      outgoing.id === incoming.id ||
+      outgoing.id.startsWith("slot-") ||
+      incoming.id.startsWith("slot-")
+    )
+      return;
+    const position = incoming.pos || outgoing.pos || "打";
+    const description = `${outgoing.last} ${outgoing.first} → ${incoming.last} ${incoming.first}（${position}）`;
+    const display = `選手交代: ${description}`;
+    pendingGameEvents.current.push({
+      eventType: "player_substitution",
+      description,
+    });
+    setResult(display);
+    setResultType(null);
+    setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
+  };
+  const recordDefensivePositionChange = (
+    changes: { player: Player; from: string; to: string }[],
+  ) => {
+    if (!isLiveGame || changes.length === 0) return;
+    const description = changes
+      .filter(({ from, to }) => from !== to)
+      .map(({ player, from, to }) => `${player.last} ${player.first}（${from}→${to}）`)
+      .join(" / ");
+    if (!description) return;
+    const display = `守備変更: ${description}`;
+    pendingGameEvents.current.push({
+      eventType: "defensive_position_change",
+      description,
+    });
+    setResult(display);
+    setResultType(null);
+    setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
+  };
   const move = (
     to: "away" | "home",
     area: "players" | "bench",
     index: number,
   ) => {
-    if (!drag) return;
-    const from = team(drag.team),
+    const activeDrag = dragRef.current ?? drag;
+    if (!activeDrag) return;
+    const from = team(activeDrag.team),
       dest = team(to),
-      fromKey = drag.area,
+      fromKey = activeDrag.area,
       destKey = area;
+    if (activeDrag.team === to && fromKey === "bench" && destKey === "players") {
+      const bench = [...from.bench],
+        [incoming] = bench.splice(activeDrag.index, 1),
+        players = [...from.players],
+        outgoing = players[index];
+      if (!incoming) return;
+      if (outgoing) {
+        const replacement = { ...incoming, pos: outgoing.pos, avg: outgoing.avg };
+        players[index] = replacement;
+        bench.push(outgoing);
+        recordSubstitution(outgoing, replacement);
+      } else {
+        players.splice(index, 0, { ...incoming, pos: "打" });
+      }
+      updateTeam(to, { ...from, players, bench });
+      setDrag(null);
+      return;
+    }
     const fromList = [...from[fromKey]],
-      [player] = fromList.splice(drag.index, 1);
+      [player] = fromList.splice(activeDrag.index, 1);
     const destList =
-      drag.team === to && fromKey === destKey ? fromList : [...dest[destKey]];
+      activeDrag.team === to && fromKey === destKey
+        ? fromList
+        : [...dest[destKey]];
     destList.splice(index, 0, player);
-    if (drag.team === to)
+    if (activeDrag.team === to)
       updateTeam(to, { ...from, [fromKey]: fromList, [destKey]: destList });
     else {
-      updateTeam(drag.team, { ...from, [fromKey]: fromList });
+      updateTeam(activeDrag.team, { ...from, [fromKey]: fromList });
       updateTeam(to, { ...dest, [destKey]: destList });
     }
     setDrag(null);
@@ -1265,9 +1386,11 @@ function App() {
         avg: "---",
       };
     if (sourceBench >= 0) bench.splice(sourceBench, 1);
-    if (key === "players")
-      players[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
-    else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
+    if (key === "players") {
+      const replacement = { ...member, pos: old.pos, avg: old.avg };
+      players[slotIndex] = replacement;
+      recordSubstitution(old, replacement);
+    } else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
     updateTeam(pick.team, { ...target, players, bench });
     setPick(null);
   };
@@ -1277,9 +1400,29 @@ function App() {
     i: number,
     pos: string,
   ) => {
+    if (!canEditDefense(which)) return;
     const t = team(which),
       list = [...t[area]];
-    list[i] = { ...list[i], pos };
+    const player = list[i];
+    if (!player || player.pos === pos) return;
+    if (area === "players" && positions.slice(0, 9).includes(pos)) {
+      const swappedIndex = list.findIndex(
+        (candidate, index) => index !== i && candidate.pos === pos,
+      );
+      if (swappedIndex >= 0) {
+        const swapped = list[swappedIndex],
+          previousPosition = player.pos;
+        list[i] = { ...player, pos };
+        list[swappedIndex] = { ...swapped, pos: previousPosition };
+        recordDefensivePositionChange([
+          { player, from: previousPosition, to: pos },
+          { player: swapped, from: pos, to: previousPosition },
+        ]);
+      } else {
+        list[i] = { ...player, pos };
+        recordDefensivePositionChange([{ player, from: player.pos, to: pos }]);
+      }
+    } else list[i] = { ...player, pos };
     updateTeam(which, { ...t, [area]: list });
   };
   const addPlayer = (which: "away" | "home") => {
@@ -1295,30 +1438,53 @@ function App() {
     updateTeam(which, { ...t, players: [...t.players, player] });
     setPick({ team: which, area: "players", slotId });
   };
-  const dropOnField = (which: TeamSide, pos: string) => {
-    if (!drag || drag.team !== which) return;
+  const dropOnField = (
+    which: TeamSide,
+    pos: string,
+    dragOverride?: DragState,
+  ) => {
+    const activeDrag = dragOverride ?? dragRef.current ?? drag;
+    if (!activeDrag || activeDrag.team !== which || !canEditDefense(which))
+      return;
     const defending = team(which);
-    if (drag.area === "players") {
+    if (activeDrag.area === "players") {
       const players = [...defending.players],
-        target = players.findIndex((player) => player.pos === pos);
+        target = players.findIndex((player) => player.pos === pos),
+        dragged = players[activeDrag.index];
+      if (!dragged) return;
       if (target >= 0) {
-        [players[drag.index].pos, players[target].pos] = [
-          players[target].pos,
-          players[drag.index].pos,
-        ];
+        const displaced = players[target],
+          draggedPosition = dragged.pos,
+          displacedPosition = displaced.pos;
+        // Keep the original positions for the event record. Mutating the
+        // existing Player objects here made both changes look like no-ops.
+        players[activeDrag.index] = { ...dragged, pos: displacedPosition };
+        players[target] = { ...displaced, pos: draggedPosition };
+        recordDefensivePositionChange([
+          { player: dragged, from: draggedPosition, to: displacedPosition },
+          { player: displaced, from: displacedPosition, to: draggedPosition },
+        ]);
+        updateTeam(which, { ...defending, players });
+      } else {
+        players[activeDrag.index] = { ...dragged, pos };
+        recordDefensivePositionChange([
+          { player: dragged, from: dragged.pos, to: pos },
+        ]);
         updateTeam(which, { ...defending, players });
       }
     } else {
       const bench = [...defending.bench],
-        [incoming] = bench.splice(drag.index, 1);
+        [incoming] = bench.splice(activeDrag.index, 1);
       if (!incoming) return;
       const players = [...defending.players],
         target = players.findIndex((player) => player.pos === pos);
       if (target >= 0) {
-        const [outgoing] = players.splice(target, 1);
+        const outgoing = players[target];
+        const replacement = { ...incoming, pos, avg: outgoing.avg };
+        players[target] = replacement;
         bench.push(outgoing);
-      }
-      players.push({ ...incoming, pos });
+        recordSubstitution(outgoing, replacement);
+      } else players.push({ ...incoming, pos });
       updateTeam(which, { ...defending, players, bench });
     }
     setDrag(null);
@@ -1964,21 +2130,13 @@ function App() {
           <Count label="S" active={strikes} max={2} tone="strike" />
           <Count label="O" active={outs} max={3} tone="out" />
         </div>
-        {result && (
-          <div
-            className={`result-banner ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
-          >
-            <span>打席結果</span>
-            <strong>{result}</strong>
-          </div>
-        )}
+        {result && <ResultBanner result={result} />}
       </section>
       <Field
         team={fieldingTeam}
         teamSide={fieldingSide}
         runners={runners}
-        admin={canEditGame}
-        drag={drag}
+        admin={canEditDefense(fieldingSide)}
         setDrag={setDrag}
         dropOnField={dropOnField}
         findPlayerByName={findPlayerByName}
@@ -1988,6 +2146,10 @@ function App() {
         away={away}
         home={home}
         admin={canEditGame}
+        canEditDefense={{
+          away: canEditDefense("away"),
+          home: canEditDefense("home"),
+        }}
         allowMemberChanges={canManageRoster}
         drag={drag}
         setDrag={setDrag}
@@ -2911,7 +3073,24 @@ function Play({
     inning = parts[0],
     name = parts[1] ?? "",
     result = parts.slice(2).join(" "),
-    out = ["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word));
+    out = ["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)),
+    substitution = parseSubstitution(`${name} ${result}`.trim());
+  if (substitution)
+    return (
+      <div className="play substitution-play">
+        <span>{inning}</span>
+        <div className="substitution-play-detail">
+          <small>選手交代・{substitution.position}</small>
+          <div>
+            <Avatar name={substitution.outgoing} small />
+            <b>{substitution.outgoing}</b>
+            <strong className="substitution-arrow">→</strong>
+            <Avatar name={substitution.incoming} small />
+            <b>{substitution.incoming}</b>
+          </div>
+        </div>
+      </div>
+    );
   return (
     <div
       className="play"
@@ -2921,6 +3100,46 @@ function Play({
       <b>
         {name} <em className={out ? "play-out" : "play-hit"}>{result}</em>
       </b>
+    </div>
+  );
+}
+type SubstitutionDetails = {
+  outgoing: string;
+  incoming: string;
+  position: string;
+};
+const parseSubstitution = (value: string): SubstitutionDetails | null => {
+  const match = value.match(/^選手交代:\s*(.+?)\s*→\s*(.+?)（(.+?)）$/);
+  return match
+    ? { outgoing: match[1], incoming: match[2], position: match[3] }
+    : null;
+};
+function ResultBanner({ result }: { result: string }) {
+  const substitution = parseSubstitution(result);
+  const defensiveChange = result.startsWith("守備変更:");
+  const inningStart = /^\d+回[表裏]開始$/.test(result);
+  if (substitution)
+    return (
+      <div className="result-banner substitution-banner">
+        <span>選手交代</span>
+        <strong>
+          <Avatar name={substitution.outgoing} small />
+          {substitution.outgoing}
+          <b className="substitution-arrow">→</b>
+          <Avatar name={substitution.incoming} small />
+          {substitution.incoming}
+        </strong>
+        <small>{substitution.position}</small>
+      </div>
+    );
+  return (
+    <div
+      className={`result-banner ${defensiveChange ? "defensive-change-banner" : ""} ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
+    >
+      <span>
+        {defensiveChange ? "守備変更" : inningStart ? "イニング開始" : "打席結果"}
+      </span>
+      <strong>{result}</strong>
     </div>
   );
 }
@@ -3213,7 +3432,6 @@ function Field({
   teamSide,
   runners,
   admin,
-  drag,
   setDrag,
   dropOnField,
   findPlayerByName,
@@ -3263,16 +3481,38 @@ function Field({
               key={pos}
               className={`fielder ${slotClass(pos)}`}
               draggable={admin && !!p}
-              onDragStart={() =>
-                p &&
-                setDrag({
+              onDragStart={(event: any) => {
+                if (!p) return;
+                const payload = {
                   team: teamSide,
                   area: "players",
                   index: team.players.indexOf(p),
-                })
-              }
-              onDragOver={(e: any) => admin && e.preventDefault()}
-              onDrop={() => drag && dropOnField(teamSide, pos)}
+                };
+                event.dataTransfer?.setData(
+                  "application/x-w-baseball-player",
+                  JSON.stringify(payload),
+                );
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                setDrag(payload);
+              }}
+              onDragOver={(event: any) => {
+                if (!admin) return;
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event: any) => {
+                event.preventDefault();
+                let payload: DragState | undefined;
+                try {
+                  const saved = event.dataTransfer?.getData(
+                    "application/x-w-baseball-player",
+                  );
+                  if (saved) payload = JSON.parse(saved) as DragState;
+                } catch {
+                  payload = undefined;
+                }
+                dropOnField(teamSide, pos, payload);
+              }}
               onClick={() =>
                 p && onOpenPlayer({ player: p, teamName: team.name })
               }
@@ -3297,6 +3537,7 @@ function Lineups({
   away,
   home,
   admin,
+  canEditDefense,
   allowMemberChanges,
   drag,
   setDrag,
@@ -3324,6 +3565,7 @@ function Lineups({
           id="away"
           {...{
             admin,
+            canEditPositions: canEditDefense.away,
             allowMemberChanges,
             drag,
             setDrag,
@@ -3339,6 +3581,7 @@ function Lineups({
           id="home"
           {...{
             admin,
+            canEditPositions: canEditDefense.home,
             allowMemberChanges,
             drag,
             setDrag,
@@ -3357,6 +3600,7 @@ function Lineup({
   team,
   id,
   admin,
+  canEditPositions,
   allowMemberChanges,
   drag,
   setDrag,
@@ -3366,6 +3610,26 @@ function Lineup({
   addPlayer,
   onOpenPlayer,
 }: any) {
+  const [lockedPositionIndex, setLockedPositionIndex] = useState<number | null>(
+    null,
+  );
+  const lockedPositionTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (lockedPositionTimer.current !== null)
+        window.clearTimeout(lockedPositionTimer.current);
+    },
+    [],
+  );
+  const showDefenseLockNotice = (index: number) => {
+    setLockedPositionIndex(index);
+    if (lockedPositionTimer.current !== null)
+      window.clearTimeout(lockedPositionTimer.current);
+    lockedPositionTimer.current = window.setTimeout(() => {
+      setLockedPositionIndex(null);
+      lockedPositionTimer.current = null;
+    }, 500);
+  };
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
       className={`lineup-row ${drag?.team === id && drag.index === i ? "dragging" : ""}`}
@@ -3377,14 +3641,32 @@ function Lineup({
     >
       <span>{area === "players" ? i + 1 : "・"}</span>
       {admin ? (
-        <select
-          value={p.pos}
-          onChange={(e) => changePosition(id, area, i, e.target.value)}
-        >
-          {positions.map((pos) => (
-            <option key={pos}>{pos}</option>
-          ))}
-        </select>
+        canEditPositions ? (
+          <select
+            value={p.pos}
+            onChange={(e) => changePosition(id, area, i, e.target.value)}
+          >
+            {positions.map((pos) => (
+              <option key={pos}>{pos}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="locked-position-wrap">
+            <button
+              type="button"
+              className="locked-position"
+              onClick={() => showDefenseLockNotice(i)}
+              aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
+            >
+              {p.pos}
+            </button>
+            {lockedPositionIndex === i && (
+              <span className="defense-locked-popover" role="status">
+                攻撃中：守備変更はできません
+              </span>
+            )}
+          </div>
+        )
       ) : (
         <b>{p.pos}</b>
       )}
