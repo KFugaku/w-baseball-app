@@ -12,6 +12,7 @@ export type GameCreationInput = {
   awayColor: string
   homeName: string
   homeColor: string
+  scheduledInnings: number
 }
 
 export type CreatedOwnedGame = {
@@ -20,6 +21,7 @@ export type CreatedOwnedGame = {
     id: string
     title: string
     status: '試合前'
+    scheduledInnings: number
     away: { name: string; color: string; score: number }
     home: { name: string; color: string; score: number }
   }
@@ -52,6 +54,7 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
     target_away_color: input.awayColor,
     target_home_name: input.homeName.trim(),
     target_home_color: input.homeColor,
+    target_scheduled_innings: input.scheduledInnings,
   })
   if (error) throw error
 
@@ -70,6 +73,7 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
       id: created.game_id,
       title: created.game_title,
       status: '試合前',
+      scheduledInnings: created.scheduled_innings,
       away: { name: created.away_team_name, color: created.away_team_color, score: 0 },
       home: { name: created.home_team_name, color: created.home_team_color, score: 0 },
     },

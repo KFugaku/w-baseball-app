@@ -15,11 +15,14 @@ import {
 } from "./lib/myPageData";
 import {
   getGameAccess,
+  loadPlayerStatistics,
   loadViewerGameDetail,
   loadViewerGames,
   applyGameEvent,
   subscribeToGameChanges,
   type GameAccess,
+  type PlateResult,
+  type PlayerStatistics,
   type ViewerGame,
 } from "./lib/roomViewData";
 import {
@@ -70,6 +73,7 @@ type Game = {
   id: string;
   title: string;
   status: "試合終了" | "速報中" | "試合前";
+  scheduledInnings: number;
   away: string;
   home: string;
   awayScore: number | null;
@@ -90,8 +94,10 @@ type Snapshot = {
   homeScore: number;
   inningScores?: InningScores;
   runners: Partial<Record<Base, string>>;
+  runnerPitchers: Partial<Record<Base, string>>;
   result: string;
   plays: string[];
+  completedPlateAppearance?: boolean;
 };
 type GameProgressSnapshot = {
   version: 1;
@@ -99,6 +105,7 @@ type GameProgressSnapshot = {
   batters: Batters;
   inningScores: InningScores;
   runners: Partial<Record<Base, string>>;
+  runnerPitchers?: Partial<Record<Base, string>>;
   result: string;
   plays: string[];
 };
@@ -121,6 +128,7 @@ type PersistedAppState = {
   homeScore: number;
   inningScores?: InningScores;
   runners: Partial<Record<Base, string>>;
+  runnerPitchers?: Partial<Record<Base, string>>;
   result: string;
   plays: string[];
   history: Snapshot[];
@@ -176,6 +184,20 @@ const emptyTeam = (name: string, color: string): Team => ({
   bench: [],
 });
 const emptyInningScores = (): InningScores => ({ away: [], home: [] });
+
+type PendingPlateAppearance = {
+  eventType: "plate_appearance";
+  description: string;
+  batter: Player;
+  pitcher: Player;
+  result: PlateResult;
+  runsBattedIn: number;
+  outsRecorded: number;
+  responsiblePitcherKeys: string[];
+  baseRunnersBefore: number;
+  inning: number;
+  half: "top" | "bottom";
+};
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
   typeof value === "object" &&
@@ -213,6 +235,7 @@ const readProgressSnapshot = (
     batters,
     inningScores,
     runners: snapshot.runners,
+    runnerPitchers: snapshot.runnerPitchers,
     result: typeof snapshot.result === "string" ? snapshot.result : undefined,
     plays: Array.isArray(snapshot.plays)
       ? snapshot.plays.filter(
@@ -268,6 +291,8 @@ function App() {
   const lastGameSyncSignature = useRef<string | null>(null);
   const gameSyncInFlight = useRef(false);
   const skipNextGameSync = useRef(false);
+  const pendingPlateAppearance = useRef<PendingPlateAppearance | null>(null);
+  const pendingPlateAppearanceUndo = useRef(false);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
       null,
@@ -281,6 +306,7 @@ function App() {
         id: "g1",
         title: "第一試合",
         status: "試合終了",
+        scheduledInnings: 9,
         away: "チームA",
         home: "チームB",
         awayScore: 1,
@@ -290,6 +316,7 @@ function App() {
         id: "g2",
         title: "第二試合",
         status: "速報中",
+        scheduledInnings: 9,
         away: "多摩リバース",
         home: "府中フェニックス",
         awayScore: 1,
@@ -299,6 +326,7 @@ function App() {
         id: "g3",
         title: "第三試合",
         status: "試合前",
+        scheduledInnings: 9,
         away: "チームA",
         home: "チームB",
         awayScore: null,
@@ -313,6 +341,7 @@ function App() {
       home: "チームB",
       awayColor: pastelColors[0],
       homeColor: pastelColors[1],
+      scheduledInnings: 9,
     });
   const [away, setAway] = useState<Team>(() =>
       makeTeam("多摩リバース", 0, pastelColors[0]),
@@ -350,6 +379,9 @@ function App() {
       1: "佐藤",
       2: "鈴木",
     }),
+    [runnerPitchers, setRunnerPitchers] = useState<
+      Partial<Record<Base, string>>
+    >({ 1: "m9", 2: "m9" }),
     [result, setResult] = useState(""),
     [plays, setPlays] = useState([
       "3回表",
@@ -460,8 +492,20 @@ function App() {
       const saved = await loadSnapshot<PersistedAppState>();
       if (!cancelled && saved?.version === 1) {
         setMembers(saved.members);
-        setGames(saved.games);
-        setGame(saved.game);
+        setGames(
+          saved.games.map((savedGame) => ({
+            ...savedGame,
+            scheduledInnings: savedGame.scheduledInnings ?? 9,
+          })),
+        );
+        setGame(
+          saved.game
+            ? {
+                ...saved.game,
+                scheduledInnings: saved.game.scheduledInnings ?? 9,
+              }
+            : null,
+        );
         setAway(saved.away);
         setHome(saved.home);
         setGameTeams(saved.gameTeams ?? {});
@@ -476,6 +520,7 @@ function App() {
         setHomeScore(saved.homeScore);
         setInningScores(saved.inningScores ?? emptyInningScores());
         setRunners(saved.runners);
+        setRunnerPitchers(saved.runnerPitchers ?? {});
         setResult(saved.result);
         setPlays(saved.plays);
         setHistory(saved.history);
@@ -510,6 +555,7 @@ function App() {
         homeScore,
         inningScores,
         runners,
+        runnerPitchers,
         result,
         plays,
         history,
@@ -535,6 +581,7 @@ function App() {
     homeScore,
     inningScores,
     runners,
+    runnerPitchers,
     result,
     plays,
     history,
@@ -555,6 +602,7 @@ function App() {
           id: detail.id,
           title: detail.title,
           status: detail.status,
+          scheduledInnings: detail.scheduledInnings,
           away: detail.away.name,
           home: detail.home.name,
           awayScore: detail.state?.away_score ?? detail.away.score,
@@ -596,6 +644,7 @@ function App() {
         setBatters(progress.batters ?? { away: 0, home: 0 });
         setInningScores(progress.inningScores ?? emptyInningScores());
         setRunners(progress.runners ?? {});
+        setRunnerPitchers(progress.runnerPitchers ?? {});
         setResult(progress.result ?? "");
         setResultType(null);
         setHistory([]);
@@ -689,6 +738,7 @@ function App() {
         batters,
         inningScores,
         runners,
+        runnerPitchers,
         result,
         plays,
       },
@@ -702,12 +752,14 @@ function App() {
     if (gameSyncInFlight.current || lastGameSyncSignature.current === signature)
       return;
     const timer = window.setTimeout(() => {
+      const pending = pendingPlateAppearance.current;
+      const revertsPlateAppearance = pendingPlateAppearanceUndo.current;
       gameSyncInFlight.current = true;
       void applyGameEvent(game.id, {
         expectedRevision: gameRevision,
         clientEventId: crypto.randomUUID(),
-        eventType: "state_changed",
-        description: plays[0] ?? "試合状況を更新",
+        eventType: pending?.eventType ?? "state_changed",
+        description: pending?.description ?? plays[0] ?? "試合状況を更新",
         state,
         status:
           game.status === "試合終了"
@@ -715,6 +767,28 @@ function App() {
             : game.status === "試合前"
               ? "before"
               : "live",
+        plateAppearance: pending
+          ? {
+              batter: {
+                key: pending.batter.id,
+                lastName: pending.batter.last,
+                firstName: pending.batter.first,
+              },
+              pitcher: {
+                key: pending.pitcher.id,
+                lastName: pending.pitcher.last,
+                firstName: pending.pitcher.first,
+              },
+              result: pending.result,
+              runsBattedIn: pending.runsBattedIn,
+              outsRecorded: pending.outsRecorded,
+              responsiblePitcherKeys: pending.responsiblePitcherKeys,
+              baseRunnersBefore: pending.baseRunnersBefore,
+              inning: pending.inning,
+              half: pending.half,
+            }
+          : undefined,
+        revertLastPlateAppearance: revertsPlateAppearance,
       })
         .then((saved) => {
           lastGameSyncSignature.current = signature;
@@ -731,6 +805,10 @@ function App() {
           console.warn("試合の進行を保存できませんでした。", error);
         })
         .finally(() => {
+          if (pendingPlateAppearance.current === pending) {
+            pendingPlateAppearance.current = null;
+          }
+          if (revertsPlateAppearance) pendingPlateAppearanceUndo.current = false;
           gameSyncInFlight.current = false;
           // 通信中に続けて操作された場合は、次のrenderで最新状態を送信する。
           setGameSyncTick((tick) => tick + 1);
@@ -752,6 +830,7 @@ function App() {
     plays,
     result,
     runners,
+    runnerPitchers,
     sharedGameAccess,
     sharedGameRoute,
     strikes,
@@ -776,7 +855,7 @@ function App() {
       fieldingTeam.players.find((p) => p.pos === "投") ??
       fieldingTeam.players[0] ??
       fallbackPlayer;
-  const snapshot = () => {
+  const snapshot = (completedPlateAppearance = false) => {
     setHistory((h) =>
       [
         {
@@ -789,8 +868,10 @@ function App() {
           homeScore,
           inningScores,
           runners: { ...runners },
+          runnerPitchers: { ...runnerPitchers },
           result,
           plays: [...plays],
+          completedPlateAppearance,
         },
         ...h,
       ].slice(0, 50),
@@ -818,9 +899,31 @@ function App() {
       return items[0] === started ? items : [started, ...items];
     });
   };
+  const finishGame = () => {
+    if (!canEditGame || !game || !isLiveGame) return;
+    pendingPlateAppearance.current = null;
+    setGame((current) =>
+      current ? { ...current, status: "試合終了" } : current,
+    );
+    setSelectedRoom((room) =>
+      room
+        ? {
+            ...room,
+            games: room.games.map((item) =>
+              item.id === game.id ? { ...item, status: "試合終了" } : item,
+            ),
+          }
+        : room,
+    );
+    setPlays((items) => [`${inning}回${half} 試合終了`, ...items]);
+  };
   const undo = () => {
     const [previous, ...rest] = history;
     if (!previous) return;
+    pendingPlateAppearance.current = null;
+    pendingPlateAppearanceUndo.current = Boolean(
+      previous.completedPlateAppearance,
+    );
     setBalls(previous.balls);
     setStrikes(previous.strikes);
     setOuts(previous.outs);
@@ -830,6 +933,7 @@ function App() {
     setHomeScore(previous.homeScore);
     setInningScores(previous.inningScores ?? emptyInningScores());
     setRunners(previous.runners);
+    setRunnerPitchers(previous.runnerPitchers ?? {});
     setResult(previous.result);
     setPlays(previous.plays);
     setHistory(rest);
@@ -842,6 +946,34 @@ function App() {
   const resetCount = () => {
     setBalls(0);
     setStrikes(0);
+  };
+  const queuePlateAppearance = (
+    plateResult: PlateResult,
+    text: string,
+    runsBattedIn: number,
+    outsRecorded: number,
+    responsiblePitcherKeys: string[],
+  ) => {
+    if (
+      currentBatter.id === "empty" ||
+      currentBatter.id.startsWith("slot-") ||
+      pitcher.id === "empty" ||
+      pitcher.id.startsWith("slot-")
+    )
+      return;
+    pendingPlateAppearance.current = {
+      eventType: "plate_appearance",
+      description: `${currentBatter.last} ${text}`,
+      batter: currentBatter,
+      pitcher,
+      result: plateResult,
+      runsBattedIn,
+      outsRecorded,
+      responsiblePitcherKeys,
+      baseRunnersBefore: Object.keys(runners).length,
+      inning,
+      half: half === "表" ? "top" : "bottom",
+    };
   };
   const next = () =>
     setBatters((current) => {
@@ -865,11 +997,13 @@ function App() {
     setOuts(0);
     resetCount();
     setRunners({});
+    setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
   };
-  const out = (text: string) => {
+  const out = (text: string, plateResult: PlateResult) => {
     if (!isLiveGame) return;
-    snapshot();
+    snapshot(true);
+    queuePlateAppearance(plateResult, text, 0, 1, []);
     log(text);
     resetCount();
     next();
@@ -915,19 +1049,42 @@ function App() {
   };
   const hit = (bases: number, text: string) => {
     if (!isLiveGame) return;
-    snapshot();
+    snapshot(true);
     let runs = 0;
     const nextRunners: Partial<Record<Base, string>> = {};
+    const nextRunnerPitchers: Partial<Record<Base, string>> = {};
+    const responsiblePitcherKeys: string[] = [];
     ([3, 2, 1] as Base[]).forEach((base) => {
       const runner = runners[base];
       if (!runner) return;
-      if (base + bases > 3) runs++;
-      else nextRunners[(base + bases) as Base] = runner;
+      if (base + bases > 3) {
+        runs++;
+        responsiblePitcherKeys.push(runnerPitchers[base] ?? pitcher.id);
+      } else {
+        nextRunners[(base + bases) as Base] = runner;
+        nextRunnerPitchers[(base + bases) as Base] =
+          runnerPitchers[base] ?? pitcher.id;
+      }
     });
-    if (bases === 4) runs++;
-    else nextRunners[bases as Base] = currentBatter.last;
+    if (bases === 4) {
+      runs++;
+      responsiblePitcherKeys.push(pitcher.id);
+    } else {
+      nextRunners[bases as Base] = currentBatter.last;
+      nextRunnerPitchers[bases as Base] = pitcher.id;
+    }
+    const plateResult: PlateResult =
+      bases === 1
+        ? "single"
+        : bases === 2
+          ? "double"
+          : bases === 3
+            ? "triple"
+            : "home_run";
+    queuePlateAppearance(plateResult, text, runs, 0, responsiblePitcherKeys);
     score(runs);
     setRunners(nextRunners);
+    setRunnerPitchers(nextRunnerPitchers);
     log(text);
     resetCount();
     next();
@@ -935,22 +1092,66 @@ function App() {
   };
   const freeBase = (text: string) => {
     if (!isLiveGame) return;
-    snapshot();
+    snapshot(true);
     const n = { ...runners };
+    const nextRunnerPitchers = { ...runnerPitchers };
     let runs = 0;
+    const responsiblePitcherKeys: string[] = [];
     if (n[1]) {
       if (n[2]) {
-        if (n[3]) runs = 1;
+        if (n[3]) {
+          runs = 1;
+          responsiblePitcherKeys.push(runnerPitchers[3] ?? pitcher.id);
+        }
         n[3] = n[2];
+        nextRunnerPitchers[3] = runnerPitchers[2] ?? pitcher.id;
       }
       n[2] = n[1];
+      nextRunnerPitchers[2] = runnerPitchers[1] ?? pitcher.id;
     }
     n[1] = currentBatter.last;
+    nextRunnerPitchers[1] = pitcher.id;
+    queuePlateAppearance(
+      text === "死球" ? "hit_by_pitch" : "walk",
+      text,
+      runs,
+      0,
+      responsiblePitcherKeys,
+    );
     score(runs);
     setRunners(n);
+    setRunnerPitchers(nextRunnerPitchers);
     log(text);
     resetCount();
     next();
+    setResultType(null);
+  };
+  const sacrificeFly = () => {
+    if (!isLiveGame) return;
+    snapshot(true);
+    const scoresRunner = Boolean(runners[3]);
+    const responsiblePitcherKeys = scoresRunner
+      ? [runnerPitchers[3] ?? pitcher.id]
+      : [];
+    const nextRunners = { ...runners };
+    const nextRunnerPitchers = { ...runnerPitchers };
+    delete nextRunners[3];
+    delete nextRunnerPitchers[3];
+    queuePlateAppearance(
+      "sacrifice_fly",
+      "犠牲フライ",
+      scoresRunner ? 1 : 0,
+      1,
+      responsiblePitcherKeys,
+    );
+    if (scoresRunner) score(1);
+    setRunners(nextRunners);
+    setRunnerPitchers(nextRunnerPitchers);
+    log("犠牲フライ");
+    resetCount();
+    next();
+    if (outs === 2) changeHalf();
+    else setOuts((current) => current + 1);
     setResultType(null);
   };
   const pitch = (kind: "ball" | "strike" | "foul") => {
@@ -969,7 +1170,7 @@ function App() {
     }
     if (strikes === 2) {
       setHistory((h) => h.slice(1));
-      out("三振");
+      out("三振", "strikeout");
     } else setStrikes((v) => v + 1);
   };
   const chooseResult = (kind: string) => {
@@ -978,7 +1179,8 @@ function App() {
       setResultType(kind);
     else if (kind === "HR") hit(4, "ホームラン");
     else if (kind === "四球" || kind === "死球") freeBase(kind);
-    else out("三振");
+    else if (kind === "犠飛") sacrificeFly();
+    else out("三振", "strikeout");
   };
   const detail = (pos: string) => {
     if (!isLiveGame) return;
@@ -986,7 +1188,15 @@ function App() {
     if (resultType === "安打") hit(1, text);
     else if (resultType === "2塁打") hit(2, text);
     else if (resultType === "3塁打") hit(3, text);
-    else out(text);
+    else
+      out(
+        text,
+        resultType === "ゴロ"
+          ? "groundout"
+          : resultType === "飛"
+            ? "flyout"
+            : "lineout",
+      );
   };
   const updateTeam = (which: "away" | "home", value: Team) => {
     if (which === "away") setAway(value);
@@ -1190,6 +1400,7 @@ function App() {
         id: created.game.id,
         title: created.game.title,
         status: created.game.status,
+        scheduledInnings: created.game.scheduledInnings,
         away: created.game.away.name,
         home: created.game.home.name,
         awayScore: 0,
@@ -1225,6 +1436,7 @@ function App() {
     setHomeScore(0);
     setInningScores(emptyInningScores());
     setRunners({});
+    setRunnerPitchers({});
     setResult("");
     setResultType(null);
     setHistory([]);
@@ -1422,6 +1634,7 @@ function App() {
       id: selected.id,
       title: selected.title,
       status: selected.status,
+      scheduledInnings: selected.scheduledInnings,
       away: selected.away.name,
       home: selected.home.name,
       awayScore: selected.away.score,
@@ -1497,6 +1710,7 @@ function App() {
       id: selected.id,
       title: selected.title,
       status: selected.status,
+      scheduledInnings: selected.scheduledInnings,
       away: selected.away.name,
       home: selected.home.name,
       awayScore: selected.away.score,
@@ -1635,6 +1849,8 @@ function App() {
     return (
       <PlayerProfileScreen
         profile={playerProfile}
+        roomId={sharedGameRoute?.roomId ?? selectedRoom?.id ?? null}
+        refreshKey={gameRevision}
         onBack={closePlayerProfile}
       />
     );
@@ -1837,6 +2053,7 @@ function App() {
                   "HR",
                   "四球",
                   "死球",
+                  "犠飛",
                   "三振",
                   "ゴロ",
                   "飛",
@@ -1845,7 +2062,15 @@ function App() {
                   <button
                     key={item}
                     className={
-                      ["安打", "2塁打", "3塁打", "HR", "四球", "死球"].includes(
+                      [
+                        "安打",
+                        "2塁打",
+                        "3塁打",
+                        "HR",
+                        "四球",
+                        "死球",
+                        "犠飛",
+                      ].includes(
                         item,
                       )
                         ? "result-positive"
@@ -1889,6 +2114,13 @@ function App() {
                 title={startDisabledReason}
               >
                 {isBeforeGame ? "試合を開始" : "試合開始済み"}
+              </button>
+              <button
+                className="finish-game"
+                onClick={finishGame}
+                disabled={!isLiveGame}
+              >
+                試合終了
               </button>
             </div>
           </div>
@@ -2487,12 +2719,19 @@ function GameCreateModal({
 }: {
   open: boolean;
   room: ExistingRoomForGame | null;
-  setup: { away: string; home: string; awayColor: string; homeColor: string };
+  setup: {
+    away: string;
+    home: string;
+    awayColor: string;
+    homeColor: string;
+    scheduledInnings: number;
+  };
   setSetup: (value: {
     away: string;
     home: string;
     awayColor: string;
     homeColor: string;
+    scheduledInnings: number;
   }) => void;
   onCreate: (input: GameCreationInput) => Promise<void>;
   close: () => void;
@@ -2518,6 +2757,7 @@ function GameCreateModal({
         awayColor: setup.awayColor,
         homeName: setup.home,
         homeColor: setup.homeColor,
+        scheduledInnings: setup.scheduledInnings,
       });
     } catch (reason) {
       setError(gameCreationErrorMessage(reason));
@@ -2550,6 +2790,26 @@ function GameCreateModal({
           maxLength={80}
           placeholder="後攻チーム名"
         />
+        <label className="scheduled-innings-field">
+          予定回数
+          <select
+            value={setup.scheduledInnings}
+            onChange={(event) =>
+              setSetup({
+                ...setup,
+                scheduledInnings: Number(event.target.value),
+              })
+            }
+          >
+            {Array.from({ length: 9 }, (_, index) => index + 1).map(
+              (innings) => (
+                <option value={innings} key={innings}>
+                  {innings}回
+                </option>
+              ),
+            )}
+          </select>
+        </label>
         <div className="color-choices">
           <label>
             先攻カラー
@@ -2682,43 +2942,99 @@ function PlayerCard({
 }
 function PlayerProfileScreen({
   profile,
+  roomId,
+  refreshKey,
   onBack,
 }: {
   profile: PlayerProfile;
+  roomId: string | null;
+  refreshKey: number;
   onBack: () => void;
 }) {
   const { player, teamName } = profile;
   const [selectedTab, setSelectedTab] = useState<PlayerProfileTab>("batting");
   const [showAllPlateAppearances, setShowAllPlateAppearances] = useState(false);
+  const [statistics, setStatistics] = useState<PlayerStatistics | null>(null);
+  const [statisticsError, setStatisticsError] = useState("");
+  const [statisticsLoading, setStatisticsLoading] = useState(Boolean(roomId));
+
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+    void loadPlayerStatistics(roomId, player.id)
+      .then((loaded) => {
+        if (!cancelled) setStatistics(loaded);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setStatisticsError(
+          error instanceof Error
+            ? error.message
+            : "選手成績を読み込めませんでした。",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setStatisticsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [player.id, refreshKey, roomId]);
+
+  const rate = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return "—";
+    const formatted = value.toFixed(3);
+    return value < 1 ? formatted.replace(/^0/, "") : formatted;
+  };
+  const count = (value: number | null | undefined) =>
+    value === null || value === undefined ? "—" : String(value);
+  const innings = (recordedOuts: number | undefined) => {
+    if (recordedOuts === undefined) return "—";
+    const whole = Math.floor(recordedOuts / 3);
+    const remainder = recordedOuts % 3;
+    return `${whole}${remainder ? ` ${remainder}/3` : ""}`;
+  };
+  const batting = statistics?.batting;
+  const pitching = statistics?.pitching;
 
   const battingStats = [
-    ["打率", player.avg],
-    ["打点", "—"],
-    ["本塁打", "—"],
-    ["安打", "—"],
-    ["四球", "—"],
-    ["死球", "—"],
-    ["三振", "—"],
-    ["打数", "—"],
-    ["試合数", "—"],
-    ["出塁率", "—"],
-    ["長打率", "—"],
-    ["OPS", "—"],
+    ["打率", batting ? rate(batting.batting_average) : player.avg],
+    ["打点", count(batting?.runs_batted_in)],
+    ["本塁打", count(batting?.home_runs)],
+    ["安打", count(batting?.hits)],
+    ["四球", count(batting?.walks)],
+    ["死球", count(batting?.hit_by_pitch)],
+    ["三振", count(batting?.strikeouts)],
+    ["打数", count(batting?.at_bats)],
+    ["試合数", count(batting?.games)],
+    ["出塁率", rate(batting?.on_base_percentage)],
+    ["長打率", rate(batting?.slugging_percentage)],
+    ["OPS", rate(batting?.ops)],
   ];
   const pitchingStats = [
-    ["防御率", "—"],
-    ["投球回", "—"],
-    ["勝利", "—"],
-    ["敗北", "—"],
-    ["登板数", "—"],
-    ["セーブ", "—"],
-    ["ホールド", "—"],
-    ["与四球", "—"],
-    ["奪三振", "—"],
-    ["被安打", "—"],
-    ["自責点", "—"],
+    [
+      "防御率",
+      pitching?.earned_run_average === null ||
+      pitching?.earned_run_average === undefined
+        ? "—"
+        : pitching.earned_run_average.toFixed(2),
+    ],
+    ["投球回", innings(pitching?.outs_recorded)],
+    ["勝利", count(pitching?.wins)],
+    ["敗北", count(pitching?.losses)],
+    ["登板数", count(pitching?.appearances)],
+    ["セーブ", count(pitching?.saves)],
+    ["ホールド", count(pitching?.holds)],
+    ["与四球", count(pitching?.walks)],
+    ["奪三振", count(pitching?.strikeouts)],
+    ["被安打", count(pitching?.hits_allowed)],
+    ["自責点", count(pitching?.earned_runs)],
   ];
-  const isPitcher = player.pos === "投";
+  const isPitcher = (pitching?.appearances ?? 0) > 0 || player.pos === "投";
+  const plateAppearanceGames = statistics?.plate_appearances ?? [];
+  const visiblePlateAppearanceGames = showAllPlateAppearances
+    ? plateAppearanceGames
+    : plateAppearanceGames.slice(0, 3);
 
   return (
     <main className="app-shell player-profile-screen">
@@ -2766,6 +3082,8 @@ function PlayerProfileScreen({
             打席結果
           </button>
         </div>
+        {statisticsLoading && <p className="profile-empty">成績を集計中…</p>}
+        {statisticsError && <p className="error">{statisticsError}</p>}
         {selectedTab === "batting" && (
           <ProfileStatGrid stats={battingStats} />
         )}
@@ -2777,26 +3095,67 @@ function PlayerProfileScreen({
           ))}
         {selectedTab === "plate-appearances" && (
           <section className="plate-appearance-list">
-            <p className="profile-empty">
-              打席結果はまだ記録されていません。
-            </p>
-            {showAllPlateAppearances && (
-              <p className="profile-empty profile-history-note">
-                これより前の打席結果はありません。
+            {!statisticsLoading && !plateAppearanceGames.length && (
+              <p className="profile-empty">
+                打席結果はまだ記録されていません。
               </p>
             )}
-            <button
-              className="show-more-plate-appearances"
-              onClick={() => setShowAllPlateAppearances(true)}
-              disabled={showAllPlateAppearances}
-            >
-              {showAllPlateAppearances ? "すべて表示しています" : "もっと見る"}
-            </button>
+            {visiblePlateAppearanceGames.map((gameResult) => (
+              <article className="plate-appearance-game" key={gameResult.game_id}>
+                <header>
+                  <h2>{gameResult.game_title}</h2>
+                  <time dateTime={gameResult.played_at}>
+                    {new Intl.DateTimeFormat("ja-JP", {
+                      year: "numeric",
+                      month: "numeric",
+                      day: "numeric",
+                    }).format(new Date(gameResult.played_at))}
+                  </time>
+                </header>
+                <ul>
+                  {gameResult.results.map((appearance, index) => (
+                    <li key={`${appearance.occurred_at}-${index}`}>
+                      <span>
+                        {appearance.inning}回
+                        {appearance.half === "top" ? "表" : "裏"}
+                      </span>
+                      <b>{plateResultLabel(appearance.result)}</b>
+                      <small>{appearance.description}</small>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+            {plateAppearanceGames.length > 3 && (
+              <button
+                className="show-more-plate-appearances"
+                onClick={() => setShowAllPlateAppearances((current) => !current)}
+              >
+                {showAllPlateAppearances ? "閉じる" : "もっと見る"}
+              </button>
+            )}
           </section>
         )}
       </section>
     </main>
   );
+}
+
+function plateResultLabel(result: PlateResult): string {
+  return {
+    single: "安打",
+    double: "二塁打",
+    triple: "三塁打",
+    home_run: "本塁打",
+    walk: "四球",
+    hit_by_pitch: "死球",
+    strikeout: "三振",
+    groundout: "ゴロ",
+    flyout: "フライ",
+    lineout: "ライナー",
+    sacrifice_fly: "犠牲フライ",
+    sacrifice_bunt: "犠打",
+  }[result];
 }
 
 function ProfileStatGrid({ stats }: { stats: string[][] }) {
