@@ -27,6 +27,13 @@ export type CreatedOwnedGame = {
   }
 }
 
+type SupabaseErrorLike = {
+  code?: unknown
+  message?: unknown
+  details?: unknown
+  hint?: unknown
+}
+
 function client() {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error('Supabase接続が未設定です。')
@@ -35,13 +42,29 @@ function client() {
 }
 
 export function gameCreationErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    if (/チーム名を|異なるチーム名|試合名は|カラー|権限がありません|ログインが必要/i.test(error.message)) {
-      return error.message
-    }
-    if (/create_owned_game|schema cache|could not find the function/i.test(error.message)) {
-      return '試合作成機能の準備を反映中です。最新のSQLマイグレーションを実行してから、画面を再読み込みしてください。'
-    }
+  const supabaseError =
+      error && typeof error === 'object' ? (error as SupabaseErrorLike) : null,
+    message =
+      error instanceof Error
+        ? error.message
+        : typeof supabaseError?.message === 'string'
+          ? supabaseError.message
+          : '',
+    details =
+      typeof supabaseError?.details === 'string' ? supabaseError.details : '',
+    hint = typeof supabaseError?.hint === 'string' ? supabaseError.hint : '',
+    code = typeof supabaseError?.code === 'string' ? supabaseError.code : '',
+    diagnostic = `${code} ${message} ${details} ${hint}`
+
+  if (/チーム名を|異なるチーム名|試合名は|カラー|権限がありません|ログインが必要/i.test(message)) {
+    return message
+  }
+  if (
+    /PGRST202|create_owned_game|schema cache|could not find the function/i.test(
+      diagnostic,
+    )
+  ) {
+    return '試合作成用SQLが旧版です。202610060010_player_statistics.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
   }
   return '試合を作成できませんでした。入力内容とSupabaseの設定を確認してください。'
 }
