@@ -815,22 +815,28 @@ begin
   normalized_title := nullif(trim(target_title), '');
   if normalized_title is null then
     normalized_title := format('第%s試合', (
-      select count(*) + 1 from public.games where room_id = active_room.id
+      select count(*) + 1
+      from public.games as existing_game
+      where existing_game.room_id = active_room.id
     ));
   end if;
   if char_length(normalized_title) not between 1 and 120 then
     raise exception '試合名は1〜120文字で入力してください。';
   end if;
 
-  select id into away_team_id from public.teams
-  where room_id = active_room.id and name = normalized_away_name;
+  select existing_team.id into away_team_id
+  from public.teams as existing_team
+  where existing_team.room_id = active_room.id
+    and existing_team.name = normalized_away_name;
   if away_team_id is null then
     insert into public.teams (room_id, name, color)
     values (active_room.id, normalized_away_name, normalized_away_color)
     returning id into away_team_id;
   end if;
-  select id into home_team_id from public.teams
-  where room_id = active_room.id and name = normalized_home_name;
+  select existing_team.id into home_team_id
+  from public.teams as existing_team
+  where existing_team.room_id = active_room.id
+    and existing_team.name = normalized_home_name;
   if home_team_id is null then
     insert into public.teams (room_id, name, color)
     values (active_room.id, normalized_home_name, normalized_home_color)
