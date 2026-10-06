@@ -2698,11 +2698,15 @@ function PlayerProfileScreen({
       </header>
       <section className="player-profile-card card">
         <span className="section-eyebrow">PLAYER PROFILE</span>
-        <Avatar name={player.last} />
-        <h1>
-          {player.last} {player.first}
-        </h1>
-        <p>{teamName}</p>
+        <div className="player-profile-identity">
+          <Avatar name={player.last} />
+          <div>
+            <h1>
+              {player.last} {player.first}
+            </h1>
+            <p>{teamName}</p>
+          </div>
+        </div>
         <dl>
           <div>
             <dt>守備位置</dt>
@@ -2924,7 +2928,6 @@ function Lineup({
           className="profile-player"
           onClick={() => onOpenPlayer({ player: p, teamName: team.name })}
         >
-          <Avatar name={p.last} small />
           {p.last} {p.first}
         </button>
         {allowMemberChanges && (
