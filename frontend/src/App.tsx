@@ -641,6 +641,18 @@ function App() {
   }, [authReady, sharedGameRoute]);
 
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
+  const isBeforeGame = game?.status === "試合前";
+  const isLiveGame = game?.status === "速報中";
+  const canManageRoster = canEditGame;
+  const startDisabledReason = !game
+    ? "試合情報を読み込み中です。"
+    : !canEditGame
+      ? "閲覧モードでは試合を開始できません。"
+      : !isBeforeGame
+        ? game.status === "試合終了"
+          ? "終了した試合は開始できません。"
+          : "この試合はすでに開始されています。"
+        : "";
   useEffect(() => {
     if (
       !sharedGameRoute ||
@@ -684,7 +696,12 @@ function App() {
         eventType: "state_changed",
         description: plays[0] ?? "試合状況を更新",
         state,
-        status: game.status === "試合終了" ? "finished" : "live",
+        status:
+          game.status === "試合終了"
+            ? "finished"
+            : game.status === "試合前"
+              ? "before"
+              : "live",
       })
         .then((saved) => {
           lastGameSyncSignature.current = signature;
@@ -747,21 +764,6 @@ function App() {
       fieldingTeam.players[0] ??
       fallbackPlayer;
   const snapshot = () => {
-    setGame((current) =>
-      current?.status === "試合前" ? { ...current, status: "速報中" } : current,
-    );
-    if (game) {
-      setSelectedRoom((room) =>
-        room
-          ? {
-              ...room,
-              games: room.games.map((item) =>
-                item.id === game.id ? { ...item, status: "速報中" } : item,
-              ),
-            }
-          : room,
-      );
-    }
     setHistory((h) =>
       [
         {
@@ -780,6 +782,28 @@ function App() {
         ...h,
       ].slice(0, 50),
     );
+  };
+  const startGame = () => {
+    if (!canEditGame || !game || !isBeforeGame) return;
+    setGame((current) =>
+      current ? { ...current, status: "速報中" } : current,
+    );
+    setSelectedRoom((room) =>
+      room
+        ? {
+            ...room,
+            games: room.games.map((item) =>
+              item.id === game.id ? { ...item, status: "速報中" } : item,
+            ),
+          }
+        : room,
+    );
+    setResult("");
+    setResultType(null);
+    setPlays((items) => {
+      const started = `${inning}回${half} 試合開始`;
+      return items[0] === started ? items : [started, ...items];
+    });
   };
   const undo = () => {
     const [previous, ...rest] = history;
@@ -815,6 +839,7 @@ function App() {
       return { ...current, [battingSide]: nextBatter };
     });
   const changeHalf = () => {
+    if (!isLiveGame) return;
     const nextHalf = half === "表" ? "裏" : "表",
       nextInning = half === "裏" ? inning + 1 : inning;
     setInningScores((current) => {
@@ -830,6 +855,7 @@ function App() {
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
   };
   const out = (text: string) => {
+    if (!isLiveGame) return;
     snapshot();
     log(text);
     resetCount();
@@ -839,7 +865,7 @@ function App() {
     setResultType(null);
   };
   const score = (runs: number) => {
-    if (!runs) return;
+    if (!isLiveGame || !runs) return;
     const side: TeamSide = half === "表" ? "away" : "home";
     if (side === "away") setAwayScore((v) => v + runs);
     else setHomeScore((v) => v + runs);
@@ -875,6 +901,7 @@ function App() {
     });
   };
   const hit = (bases: number, text: string) => {
+    if (!isLiveGame) return;
     snapshot();
     let runs = 0;
     const nextRunners: Partial<Record<Base, string>> = {};
@@ -894,6 +921,7 @@ function App() {
     setResultType(null);
   };
   const freeBase = (text: string) => {
+    if (!isLiveGame) return;
     snapshot();
     const n = { ...runners };
     let runs = 0;
@@ -913,6 +941,7 @@ function App() {
     setResultType(null);
   };
   const pitch = (kind: "ball" | "strike" | "foul") => {
+    if (!isLiveGame) return;
     snapshot();
     if (kind === "ball") {
       if (balls === 3) {
@@ -931,6 +960,7 @@ function App() {
     } else setStrikes((v) => v + 1);
   };
   const chooseResult = (kind: string) => {
+    if (!isLiveGame) return;
     if (["安打", "2塁打", "3塁打", "ゴロ", "飛", "直"].includes(kind))
       setResultType(kind);
     else if (kind === "HR") hit(4, "ホームラン");
@@ -938,6 +968,7 @@ function App() {
     else out("三振");
   };
   const detail = (pos: string) => {
+    if (!isLiveGame) return;
     const text = `${pos}${resultType}`;
     if (resultType === "安打") hit(1, text);
     else if (resultType === "2塁打") hit(2, text);
@@ -1609,6 +1640,11 @@ function App() {
       </section>
       <section className="at-bat card">
         <div className="section-eyebrow">NOW BATTING</div>
+        {isBeforeGame && (
+          <p className="pre-game-note">
+            試合開始前に、選手・守備位置・打順を設定できます。
+          </p>
+        )}
         <div className="players-row">
           <PlayerCard
             player={currentBatter}
@@ -1640,6 +1676,7 @@ function App() {
         teamSide={fieldingSide}
         runners={runners}
         admin={canEditGame}
+        allowMemberChanges={canManageRoster}
         drag={drag}
         setDrag={setDrag}
         dropOnField={dropOnField}
@@ -1649,6 +1686,7 @@ function App() {
         away={away}
         home={home}
         admin={canEditGame}
+        allowMemberChanges={canManageRoster}
         drag={drag}
         setDrag={setDrag}
         move={move}
@@ -1681,6 +1719,13 @@ function App() {
               試合を削除
             </button>
           </div>
+          {!isLiveGame && (
+            <p className="admin-lock-note">
+              {isBeforeGame
+                ? "試合開始前はカウント・打席結果・攻守交代を入力できません。選手・守備位置・打順は上の一覧から編集できます。"
+                : "試合終了後は試合の操作を入力できません。"}
+            </p>
+          )}
           <div className="controls">
             <div className="control-group">
               <span>カウント</span>
@@ -1688,13 +1733,22 @@ function App() {
                 <button
                   className="pitch-yellow"
                   onClick={() => pitch("strike")}
+                  disabled={!isLiveGame}
                 >
                   ストライク
                 </button>
-                <button className="pitch-lime" onClick={() => pitch("ball")}>
+                <button
+                  className="pitch-lime"
+                  onClick={() => pitch("ball")}
+                  disabled={!isLiveGame}
+                >
                   ボール
                 </button>
-                <button className="pitch-yellow" onClick={() => pitch("foul")}>
+                <button
+                  className="pitch-yellow"
+                  onClick={() => pitch("foul")}
+                  disabled={!isLiveGame}
+                >
                   ファウル
                 </button>
               </div>
@@ -1724,13 +1778,14 @@ function App() {
                         : "result-negative"
                     }
                     onClick={() => chooseResult(item)}
+                    disabled={!isLiveGame}
                   >
                     {item}
                   </button>
                 ))}
               </div>
             </div>
-            {resultType && (
+            {isLiveGame && resultType && (
               <div className="detail-picker">
                 <span>{resultType}の打球位置</span>
                 {positions.slice(0, 9).map((pos) => (
@@ -1746,11 +1801,20 @@ function App() {
                   snapshot();
                   changeHalf();
                 }}
+                disabled={!isLiveGame}
               >
                 攻守交代
               </button>
-              <button onClick={undo} disabled={!history.length}>
+              <button onClick={undo} disabled={!isLiveGame || !history.length}>
                 ひとつ前に戻す
+              </button>
+              <button
+                className="start-game"
+                onClick={startGame}
+                disabled={Boolean(startDisabledReason)}
+                title={startDisabledReason}
+              >
+                {isBeforeGame ? "試合を開始" : "試合開始済み"}
               </button>
             </div>
           </div>
@@ -2564,6 +2628,7 @@ function Field({
   teamSide,
   runners,
   admin,
+  allowMemberChanges,
   drag,
   setDrag,
   dropOnField,
@@ -2620,7 +2685,7 @@ function Field({
               onDragOver={(e: any) => admin && e.preventDefault()}
               onDrop={() => drag && dropOnField(teamSide, pos)}
               onClick={() =>
-                admin &&
+                allowMemberChanges &&
                 p &&
                 setPick({
                   team: teamSide,
@@ -2649,6 +2714,7 @@ function Lineups({
   away,
   home,
   admin,
+  allowMemberChanges,
   drag,
   setDrag,
   move,
@@ -2674,6 +2740,7 @@ function Lineups({
           id="away"
           {...{
             admin,
+            allowMemberChanges,
             drag,
             setDrag,
             move,
@@ -2687,6 +2754,7 @@ function Lineups({
           id="home"
           {...{
             admin,
+            allowMemberChanges,
             drag,
             setDrag,
             move,
@@ -2703,6 +2771,7 @@ function Lineup({
   team,
   id,
   admin,
+  allowMemberChanges,
   drag,
   setDrag,
   move,
@@ -2734,8 +2803,10 @@ function Lineup({
       )}
       <button
         className={admin ? "choose-player" : "plain-player"}
-        disabled={!admin}
-        onClick={() => setPick({ team: id, area, index: i })}
+        disabled={!allowMemberChanges}
+        onClick={() =>
+          allowMemberChanges && setPick({ team: id, area, index: i })
+        }
       >
         {p.last} {p.first}
       </button>
@@ -2745,7 +2816,7 @@ function Lineup({
   return (
     <div className="team-lineup">
       {team.players.map((p: Player, i: number) => row(p, i, "players"))}
-      {admin && (
+      {allowMemberChanges && (
         <button className="add-lineup-player" onClick={() => addPlayer(id)}>
           ＋ 選手を追加
         </button>
