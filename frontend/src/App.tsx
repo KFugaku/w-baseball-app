@@ -202,6 +202,11 @@ type PendingGameEvent = {
   eventType: "player_substitution" | "defensive_position_change";
   description: string;
 };
+type DragState = {
+  team: "away" | "home";
+  area: "players" | "bench";
+  index: number;
+} | null;
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
   typeof value === "object" &&
@@ -359,11 +364,7 @@ function App() {
     [gameTeams, setGameTeams] = useState<
       Record<string, { away: Team; home: Team }>
     >({}),
-    [drag, setDrag] = useState<{
-      team: "away" | "home";
-      area: "players" | "bench";
-      index: number;
-    } | null>(null),
+    [drag, setDragState] = useState<DragState>(null),
     [pick, setPick] = useState<{
       team: "away" | "home";
       area: "players" | "bench";
@@ -400,6 +401,11 @@ function App() {
     [resultType, setResultType] = useState<string | null>(null),
     [history, setHistory] = useState<Snapshot[]>([]);
   const [persistenceReady, setPersistenceReady] = useState(false);
+  const dragRef = useRef<DragState>(null);
+  const setDrag = (value: DragState) => {
+    dragRef.current = value;
+    setDragState(value);
+  };
 
   useEffect(
     () => () => {
@@ -1317,14 +1323,15 @@ function App() {
     area: "players" | "bench",
     index: number,
   ) => {
-    if (!drag) return;
-    const from = team(drag.team),
+    const activeDrag = dragRef.current ?? drag;
+    if (!activeDrag) return;
+    const from = team(activeDrag.team),
       dest = team(to),
-      fromKey = drag.area,
+      fromKey = activeDrag.area,
       destKey = area;
-    if (drag.team === to && fromKey === "bench" && destKey === "players") {
+    if (activeDrag.team === to && fromKey === "bench" && destKey === "players") {
       const bench = [...from.bench],
-        [incoming] = bench.splice(drag.index, 1),
+        [incoming] = bench.splice(activeDrag.index, 1),
         players = [...from.players],
         outgoing = players[index];
       if (!incoming) return;
@@ -1341,14 +1348,16 @@ function App() {
       return;
     }
     const fromList = [...from[fromKey]],
-      [player] = fromList.splice(drag.index, 1);
+      [player] = fromList.splice(activeDrag.index, 1);
     const destList =
-      drag.team === to && fromKey === destKey ? fromList : [...dest[destKey]];
+      activeDrag.team === to && fromKey === destKey
+        ? fromList
+        : [...dest[destKey]];
     destList.splice(index, 0, player);
-    if (drag.team === to)
+    if (activeDrag.team === to)
       updateTeam(to, { ...from, [fromKey]: fromList, [destKey]: destList });
     else {
-      updateTeam(drag.team, { ...from, [fromKey]: fromList });
+      updateTeam(activeDrag.team, { ...from, [fromKey]: fromList });
       updateTeam(to, { ...dest, [destKey]: destList });
     }
     setDrag(null);
@@ -1430,18 +1439,20 @@ function App() {
     setPick({ team: which, area: "players", slotId });
   };
   const dropOnField = (which: TeamSide, pos: string) => {
-    if (!drag || drag.team !== which || !canEditDefense(which)) return;
+    const activeDrag = dragRef.current ?? drag;
+    if (!activeDrag || activeDrag.team !== which || !canEditDefense(which))
+      return;
     const defending = team(which);
-    if (drag.area === "players") {
+    if (activeDrag.area === "players") {
       const players = [...defending.players],
         target = players.findIndex((player) => player.pos === pos);
       if (target >= 0) {
-        const dragged = players[drag.index],
+        const dragged = players[activeDrag.index],
           displaced = players[target],
           draggedPosition = dragged.pos;
-        [players[drag.index].pos, players[target].pos] = [
+        [players[activeDrag.index].pos, players[target].pos] = [
           players[target].pos,
-          players[drag.index].pos,
+          players[activeDrag.index].pos,
         ];
         recordDefensivePositionChange([
           { player: dragged, from: draggedPosition, to: displaced.pos },
@@ -1451,7 +1462,7 @@ function App() {
       }
     } else {
       const bench = [...defending.bench],
-        [incoming] = bench.splice(drag.index, 1);
+        [incoming] = bench.splice(activeDrag.index, 1);
       if (!incoming) return;
       const players = [...defending.players],
         target = players.findIndex((player) => player.pos === pos);
@@ -2114,7 +2125,6 @@ function App() {
         teamSide={fieldingSide}
         runners={runners}
         admin={canEditDefense(fieldingSide)}
-        drag={drag}
         setDrag={setDrag}
         dropOnField={dropOnField}
         findPlayerByName={findPlayerByName}
@@ -3410,7 +3420,6 @@ function Field({
   teamSide,
   runners,
   admin,
-  drag,
   setDrag,
   dropOnField,
   findPlayerByName,
@@ -3469,7 +3478,10 @@ function Field({
                 })
               }
               onDragOver={(e: any) => admin && e.preventDefault()}
-              onDrop={() => drag && dropOnField(teamSide, pos)}
+              onDrop={(event: any) => {
+                event.preventDefault();
+                dropOnField(teamSide, pos);
+              }}
               onClick={() =>
                 p && onOpenPlayer({ player: p, teamName: team.name })
               }
@@ -3610,7 +3622,12 @@ function Lineup({
     </div>
   );
   return (
-    <div className="team-lineup">
+    <div
+      className={`team-lineup ${admin && !canEditPositions ? "defense-locked" : ""}`}
+    >
+      {admin && !canEditPositions && (
+        <small className="defense-locked-note">攻撃中：守備変更はできません</small>
+      )}
       {team.players.map((p: Player, i: number) => row(p, i, "players"))}
       {allowMemberChanges && (
         <button className="add-lineup-player" onClick={() => addPlayer(id)}>
