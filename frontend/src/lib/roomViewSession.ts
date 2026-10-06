@@ -6,6 +6,7 @@ const storageKey = 'w-baseball:room-view-session:v1'
 export type RoomViewSession = {
   roomId: string
   roomName: string
+  roomNumber?: string
   expiresAt: string
   handoffToken?: string
 }
@@ -39,10 +40,11 @@ function readSession(): RoomViewSession | null {
   }
 }
 
-function storeSession(row: RoomViewSessionWithHandoff): RoomViewSession {
+function storeSession(row: RoomViewSessionWithHandoff, roomNumber?: string): RoomViewSession {
   const session: RoomViewSession = {
     roomId: row.room_id,
     roomName: row.room_name,
+    roomNumber,
     expiresAt: row.expires_at,
     handoffToken: row.handoff_token,
   }
@@ -106,7 +108,7 @@ export async function startRoomViewSession(
     throw new RoomViewSessionError('invalid')
   }
 
-  return storeSession(data[0] as RoomViewSessionWithHandoff)
+  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber)
 }
 
 /**
@@ -123,7 +125,10 @@ export async function claimRoomViewSession(): Promise<RoomViewSession | null> {
   })
   if (error || !Array.isArray(data) || !data[0]) throw new RoomViewSessionError('expired')
 
-  return storeSession({ ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken })
+  return storeSession(
+    { ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken },
+    current.roomNumber,
+  )
 }
 
 /** ログアウト後は匿名Authを発行してから、同じタブの閲覧へ戻す。 */
