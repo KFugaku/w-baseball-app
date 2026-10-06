@@ -1638,23 +1638,6 @@ function App() {
           blank={game?.status === "試合前"}
         />
       </section>
-      <section className="game-start card">
-        <div>
-          <span className="section-eyebrow">GAME STATUS</span>
-          <h2>{isBeforeGame ? "試合開始前" : game?.status}</h2>
-          <p>
-            {startDisabledReason ||
-              "守備・打順を確認したら、試合開始で速報を始められます。"}
-          </p>
-        </div>
-        <button
-          className="start-game"
-          onClick={startGame}
-          disabled={Boolean(startDisabledReason)}
-        >
-          {isBeforeGame ? "試合を開始" : "試合開始済み"}
-        </button>
-      </section>
       <section className="at-bat card">
         <div className="section-eyebrow">NOW BATTING</div>
         {isBeforeGame && (
@@ -1824,6 +1807,14 @@ function App() {
               </button>
               <button onClick={undo} disabled={!isLiveGame || !history.length}>
                 ひとつ前に戻す
+              </button>
+              <button
+                className="start-game"
+                onClick={startGame}
+                disabled={Boolean(startDisabledReason)}
+                title={startDisabledReason}
+              >
+                {isBeforeGame ? "試合を開始" : "試合開始済み"}
               </button>
             </div>
           </div>
