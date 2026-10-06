@@ -77,7 +77,7 @@ begin
 
   insert into public.room_viewer_sessions as sessions (viewer_id, room_id, expires_at)
   values (current_viewer_id, target_room_id, original_expiry)
-  on conflict (viewer_id, room_id) do update
+  on conflict on constraint room_viewer_sessions_pkey do update
   set expires_at = greatest(sessions.expires_at, excluded.expires_at);
 
   return query select target_room_id, target_room_name, original_expiry;

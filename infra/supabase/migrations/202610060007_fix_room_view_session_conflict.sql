@@ -1,5 +1,5 @@
--- Issue #24 follow-up: pgcrypto は extensions スキーマにあるため、SECURITY DEFINER
--- 関数からはスキーマを明示して呼び出す。既に実行済みの関数を安全に置き換える。
+-- Issue #24 follow-up: RETURNS TABLE の room_id 出力変数と ON CONFLICT の
+-- room_id 列名が衝突するため、主キー制約名で競合対象を指定する。
 
 create or replace function public.start_room_view_session(
   requested_room_number text,
@@ -58,33 +58,6 @@ begin
   delete from public.room_view_attempts where viewer_id = current_viewer_id;
 
   return query select target_room_id, target_room_name, session_expiry;
-end;
-$$;
-
-create or replace function public.start_room_view_session_with_handoff(
-  requested_room_number text,
-  requested_password text
-)
-returns table (room_id uuid, room_name text, expires_at timestamptz, handoff_token text)
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  current_viewer_id uuid := auth.uid();
-  started_session record;
-  generated_token text := encode(extensions.gen_random_bytes(32), 'hex');
-begin
-  select * into started_session
-  from public.start_room_view_session(requested_room_number, requested_password);
-
-  update public.room_viewer_sessions as sessions
-  set handoff_token_hash = extensions.crypt(generated_token, extensions.gen_salt('bf'))
-  where sessions.viewer_id = current_viewer_id
-    and sessions.room_id = started_session.room_id;
-
-  return query
-  select started_session.room_id, started_session.room_name, started_session.expires_at, generated_token;
 end;
 $$;
 

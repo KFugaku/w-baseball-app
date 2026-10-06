@@ -119,7 +119,7 @@ begin
   insert into public.room_viewer_sessions as sessions
     (viewer_id, room_id, expires_at)
   values (current_viewer_id, target_room_id, session_expiry)
-  on conflict (viewer_id, room_id) do update
+  on conflict on constraint room_viewer_sessions_pkey do update
   set expires_at = excluded.expires_at;
 
   delete from public.room_view_attempts where viewer_id = current_viewer_id;
