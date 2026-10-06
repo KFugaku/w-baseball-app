@@ -1438,8 +1438,12 @@ function App() {
     updateTeam(which, { ...t, players: [...t.players, player] });
     setPick({ team: which, area: "players", slotId });
   };
-  const dropOnField = (which: TeamSide, pos: string) => {
-    const activeDrag = dragRef.current ?? drag;
+  const dropOnField = (
+    which: TeamSide,
+    pos: string,
+    dragOverride?: DragState,
+  ) => {
+    const activeDrag = dragOverride ?? dragRef.current ?? drag;
     if (!activeDrag || activeDrag.team !== which || !canEditDefense(which))
       return;
     const defending = team(which);
@@ -3476,18 +3480,37 @@ function Field({
               key={pos}
               className={`fielder ${slotClass(pos)}`}
               draggable={admin && !!p}
-              onDragStart={() =>
-                p &&
-                setDrag({
+              onDragStart={(event: any) => {
+                if (!p) return;
+                const payload = {
                   team: teamSide,
                   area: "players",
                   index: team.players.indexOf(p),
-                })
-              }
-              onDragOver={(e: any) => admin && e.preventDefault()}
+                };
+                event.dataTransfer?.setData(
+                  "application/x-w-baseball-player",
+                  JSON.stringify(payload),
+                );
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                setDrag(payload);
+              }}
+              onDragOver={(event: any) => {
+                if (!admin) return;
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+              }}
               onDrop={(event: any) => {
                 event.preventDefault();
-                dropOnField(teamSide, pos);
+                let payload: DragState | undefined;
+                try {
+                  const saved = event.dataTransfer?.getData(
+                    "application/x-w-baseball-player",
+                  );
+                  if (saved) payload = JSON.parse(saved) as DragState;
+                } catch {
+                  payload = undefined;
+                }
+                dropOnField(teamSide, pos, payload);
               }}
               onClick={() =>
                 p && onOpenPlayer({ player: p, teamName: team.name })
@@ -3586,7 +3609,26 @@ function Lineup({
   addPlayer,
   onOpenPlayer,
 }: any) {
-  const [showDefenseLockNotice, setShowDefenseLockNotice] = useState(false);
+  const [lockedPositionIndex, setLockedPositionIndex] = useState<number | null>(
+    null,
+  );
+  const lockedPositionTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (lockedPositionTimer.current !== null)
+        window.clearTimeout(lockedPositionTimer.current);
+    },
+    [],
+  );
+  const showDefenseLockNotice = (index: number) => {
+    setLockedPositionIndex(index);
+    if (lockedPositionTimer.current !== null)
+      window.clearTimeout(lockedPositionTimer.current);
+    lockedPositionTimer.current = window.setTimeout(() => {
+      setLockedPositionIndex(null);
+      lockedPositionTimer.current = null;
+    }, 3000);
+  };
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
       className={`lineup-row ${drag?.team === id && drag.index === i ? "dragging" : ""}`}
@@ -3608,14 +3650,21 @@ function Lineup({
             ))}
           </select>
         ) : (
-          <button
-            type="button"
-            className="locked-position"
-            onClick={() => setShowDefenseLockNotice(true)}
-            aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
-          >
-            {p.pos}
-          </button>
+          <div className="locked-position-wrap">
+            <button
+              type="button"
+              className="locked-position"
+              onClick={() => showDefenseLockNotice(i)}
+              aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
+            >
+              {p.pos}
+            </button>
+            {lockedPositionIndex === i && (
+              <span className="defense-locked-popover" role="status">
+                攻撃中：守備変更はできません
+              </span>
+            )}
+          </div>
         )
       ) : (
         <b>{p.pos}</b>
@@ -3641,9 +3690,6 @@ function Lineup({
   );
   return (
     <div className="team-lineup">
-      {admin && !canEditPositions && showDefenseLockNotice && (
-        <small className="defense-locked-note">攻撃中：守備変更はできません</small>
-      )}
       {team.players.map((p: Player, i: number) => row(p, i, "players"))}
       {allowMemberChanges && (
         <button className="add-lineup-player" onClick={() => addPlayer(id)}>
