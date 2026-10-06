@@ -643,7 +643,7 @@ function App() {
   const canEditGame = sharedGameRoute ? sharedGameAccess === "owner" : admin;
   const isBeforeGame = game?.status === "試合前";
   const isLiveGame = game?.status === "速報中";
-  const canManageRoster = canEditGame && isLiveGame;
+  const canManageRoster = canEditGame;
   const startDisabledReason = !game
     ? "試合情報を読み込み中です。"
     : !canEditGame
@@ -1642,7 +1642,7 @@ function App() {
         <div className="section-eyebrow">NOW BATTING</div>
         {isBeforeGame && (
           <p className="pre-game-note">
-            試合開始前は守備変更・打順変更のみ可能です。
+            試合開始前に、選手・守備位置・打順を設定できます。
           </p>
         )}
         <div className="players-row">
@@ -1722,7 +1722,7 @@ function App() {
           {!isLiveGame && (
             <p className="admin-lock-note">
               {isBeforeGame
-                ? "試合開始前はカウント・打席結果・攻守交代を入力できません。守備と打順は上の一覧から編集できます。"
+                ? "試合開始前はカウント・打席結果・攻守交代を入力できません。選手・守備位置・打順は上の一覧から編集できます。"
                 : "試合終了後は試合の操作を入力できません。"}
             </p>
           )}
