@@ -7,6 +7,11 @@ export type RoomViewSession = {
   roomId: string
   roomName: string
   expiresAt: string
+  handoffToken?: string
+}
+
+type RoomViewSessionWithHandoff = RoomViewSessionRow & {
+  handoff_token?: string
 }
 
 export class RoomViewSessionError extends Error {
@@ -34,11 +39,12 @@ function readSession(): RoomViewSession | null {
   }
 }
 
-function storeSession(row: RoomViewSessionRow): RoomViewSession {
+function storeSession(row: RoomViewSessionWithHandoff): RoomViewSession {
   const session: RoomViewSession = {
     roomId: row.room_id,
     roomName: row.room_name,
     expiresAt: row.expires_at,
+    handoffToken: row.handoff_token,
   }
   window.sessionStorage.setItem(storageKey, JSON.stringify(session))
   return session
@@ -83,7 +89,7 @@ export async function startRoomViewSession(
   }
 
   await ensureViewerIdentity()
-  const { data, error } = await supabase!.rpc('start_room_view_session', {
+  const { data, error } = await supabase!.rpc('start_room_view_session_with_handoff', {
     requested_room_number: roomNumber,
     requested_password: password,
   })
@@ -92,7 +98,30 @@ export async function startRoomViewSession(
     throw new RoomViewSessionError('invalid')
   }
 
-  return storeSession(data[0] as RoomViewSessionRow)
+  return storeSession(data[0] as RoomViewSessionWithHandoff)
+}
+
+/**
+ * メールログインなどで Auth の利用者IDが切り替わったあと、同じタブの閲覧権限を復元する。
+ * トークンはパスワードではなく、認証時にサーバーが発行した短命のランダム値である。
+ */
+export async function claimRoomViewSession(): Promise<RoomViewSession | null> {
+  const current = readSession()
+  if (!current?.handoffToken || !supabase) return null
+
+  const { data, error } = await supabase.rpc('claim_room_view_session', {
+    target_room_id: current.roomId,
+    provided_handoff_token: current.handoffToken,
+  })
+  if (error || !Array.isArray(data) || !data[0]) throw new RoomViewSessionError('expired')
+
+  return storeSession({ ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken })
+}
+
+/** ログアウト後は匿名Authを発行してから、同じタブの閲覧へ戻す。 */
+export async function restoreRoomViewSessionAfterLogout(): Promise<RoomViewSession | null> {
+  await ensureViewerIdentity()
+  return claimRoomViewSession()
 }
 
 /** 閲覧終了時はサーバー側の権限と、このタブ内の表示情報を両方消す。 */

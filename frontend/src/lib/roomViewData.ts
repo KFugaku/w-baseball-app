@@ -14,6 +14,9 @@ export type ViewerGameDetail = ViewerGame & {
   events: Pick<GameEventRow, 'id' | 'sequence' | 'inning' | 'half' | 'description' | 'occurred_at'>[]
 }
 
+export type GameAccess = 'owner' | 'viewer'
+export type GameStateUpdate = Partial<Pick<GameStateRow, 'inning' | 'half' | 'balls' | 'strikes' | 'outs' | 'away_score' | 'home_score'>>
+
 type RemoteGameTeam = Pick<GameTeamRow, 'game_id' | 'team_id' | 'side' | 'score'>
 
 const statusLabels: Record<GameRow['status'], ViewerGame['status']> = {
@@ -122,4 +125,26 @@ export async function loadViewerGameDetail(roomId: string, gameId: string): Prom
     state: stateRow as ViewerGameDetail['state'],
     events: (eventRows ?? []) as ViewerGameDetail['events'],
   }
+}
+
+/**
+ * 編集可否は画面のログイン状態ではなく、Supabase上の所有者・閲覧セッションで判定する。
+ * null は、対象のルーム／試合を表示する権限がない状態を表す。
+ */
+export async function getGameAccess(roomId: string, gameId: string): Promise<GameAccess | null> {
+  const { data, error } = await requireClient().rpc('get_game_access', {
+    target_room_id: roomId,
+    target_game_id: gameId,
+  })
+  if (error) throw error
+  return data === 'owner' || data === 'viewer' ? data : null
+}
+
+/** 所有者だけがRLSを通過できる、共通詳細画面からの試合状況更新。 */
+export async function updateGameState(gameId: string, update: GameStateUpdate): Promise<void> {
+  const { error } = await requireClient()
+    .from('game_states')
+    .update(update)
+    .eq('game_id', gameId)
+  if (error) throw error
 }
