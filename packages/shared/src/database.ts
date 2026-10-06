@@ -101,6 +101,7 @@ export type GameStateRow = {
   away_score: number
   home_score: number
   snapshot: Record<string, unknown>
+  revision: number
   updated_at: string
 }
 
@@ -123,6 +124,7 @@ export type GameEventRow = {
   description: string
   batter_id: string | null
   payload: Record<string, unknown>
+  client_event_id: string | null
   occurred_at: string
   created_at: string
 }
