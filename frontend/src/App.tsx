@@ -64,6 +64,7 @@ type Base = 1 | 2 | 3;
 type Member = { id: string; last: string; first: string };
 type Player = Member & { pos: string; avg: string };
 type PlayerProfile = { player: Player; teamName: string };
+type PlayerProfileTab = "batting" | "pitching" | "plate-appearances";
 type Team = { name: string; color: string; players: Player[]; bench: Player[] };
 type Game = {
   id: string;
@@ -2687,6 +2688,38 @@ function PlayerProfileScreen({
   onBack: () => void;
 }) {
   const { player, teamName } = profile;
+  const [selectedTab, setSelectedTab] = useState<PlayerProfileTab>("batting");
+  const [showAllPlateAppearances, setShowAllPlateAppearances] = useState(false);
+
+  const battingStats = [
+    ["打率", player.avg],
+    ["打点", "—"],
+    ["本塁打", "—"],
+    ["安打", "—"],
+    ["四球", "—"],
+    ["死球", "—"],
+    ["三振", "—"],
+    ["打数", "—"],
+    ["試合数", "—"],
+    ["出塁率", "—"],
+    ["長打率", "—"],
+    ["OPS", "—"],
+  ];
+  const pitchingStats = [
+    ["防御率", "—"],
+    ["投球回", "—"],
+    ["勝利", "—"],
+    ["敗北", "—"],
+    ["登板数", "—"],
+    ["セーブ", "—"],
+    ["ホールド", "—"],
+    ["与四球", "—"],
+    ["奪三振", "—"],
+    ["被安打", "—"],
+    ["自責点", "—"],
+  ];
+  const isPitcher = player.pos === "投";
+
   return (
     <main className="app-shell player-profile-screen">
       <header className="topbar">
@@ -2707,18 +2740,75 @@ function PlayerProfileScreen({
             <p>{teamName}</p>
           </div>
         </div>
-        <dl>
-          <div>
-            <dt>守備位置</dt>
-            <dd>{player.pos}</dd>
-          </div>
-          <div>
-            <dt>打率</dt>
-            <dd>{player.avg}</dd>
-          </div>
-        </dl>
+        <div className="player-profile-tabs" role="tablist" aria-label="選手成績">
+          <button
+            className={selectedTab === "batting" ? "active" : ""}
+            onClick={() => setSelectedTab("batting")}
+            role="tab"
+            aria-selected={selectedTab === "batting"}
+          >
+            打者成績
+          </button>
+          <button
+            className={selectedTab === "pitching" ? "active" : ""}
+            onClick={() => setSelectedTab("pitching")}
+            role="tab"
+            aria-selected={selectedTab === "pitching"}
+          >
+            投球成績
+          </button>
+          <button
+            className={selectedTab === "plate-appearances" ? "active" : ""}
+            onClick={() => setSelectedTab("plate-appearances")}
+            role="tab"
+            aria-selected={selectedTab === "plate-appearances"}
+          >
+            打席結果
+          </button>
+        </div>
+        {selectedTab === "batting" && (
+          <ProfileStatGrid stats={battingStats} />
+        )}
+        {selectedTab === "pitching" &&
+          (isPitcher ? (
+            <ProfileStatGrid stats={pitchingStats} />
+          ) : (
+            <p className="profile-empty">投手経験なし</p>
+          ))}
+        {selectedTab === "plate-appearances" && (
+          <section className="plate-appearance-list">
+            <p className="profile-empty">
+              打席結果はまだ記録されていません。
+            </p>
+            {showAllPlateAppearances && (
+              <p className="profile-empty profile-history-note">
+                これより前の打席結果はありません。
+              </p>
+            )}
+            <button
+              className="show-more-plate-appearances"
+              onClick={() => setShowAllPlateAppearances(true)}
+              disabled={showAllPlateAppearances}
+            >
+              {showAllPlateAppearances ? "すべて表示しています" : "もっと見る"}
+            </button>
+          </section>
+        )}
       </section>
     </main>
+  );
+}
+
+function ProfileStatGrid({ stats }: { stats: string[][] }) {
+  return (
+    <dl className="player-profile-stats">
+      {stats.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 function Count({
