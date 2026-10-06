@@ -3628,7 +3628,7 @@ function Lineup({
     lockedPositionTimer.current = window.setTimeout(() => {
       setLockedPositionIndex(null);
       lockedPositionTimer.current = null;
-    }, 1500);
+    }, 500);
   };
   const row = (p: Player, i: number, area: "players" | "bench") => (
     <div
