@@ -19,8 +19,10 @@ import {
   loadViewerGameDetail,
   loadViewerGames,
   applyGameEvent,
+  revertGameEvent,
   subscribeToGameChanges,
   type GameAccess,
+  type GameEventUpdate,
   type PlateResult,
   type PlayerStatistics,
   type ViewerGame,
@@ -85,11 +87,15 @@ type TeamSide = "away" | "home";
 type Batters = Record<TeamSide, number>;
 type InningScores = Record<TeamSide, number[]>;
 type Snapshot = {
+  inning: number;
+  half: "表" | "裏";
   balls: number;
   strikes: number;
   outs: number;
   batter: number;
   batters?: Batters;
+  away: Team;
+  home: Team;
   awayScore: number;
   homeScore: number;
   inningScores?: InningScores;
@@ -302,7 +308,11 @@ function App() {
   const skipNextGameSync = useRef(false);
   const pendingPlateAppearance = useRef<PendingPlateAppearance | null>(null);
   const pendingGameEvents = useRef<PendingGameEvent[]>([]);
-  const pendingPlateAppearanceUndo = useRef(false);
+  const pendingUndoSnapshot = useRef<Snapshot | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoReady, setUndoReady] = useState(true);
+  const loadedSharedGameKey = useRef<string | null>(null);
+  const loadedSharedGameRevision = useRef<number | null>(null);
   const inningStartTimer = useRef<number | null>(null);
   const pendingInningStart = useRef<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
@@ -486,12 +496,20 @@ function App() {
     const onPopState = () => {
       const route = readSharedGameRoute();
       setSharedGameRouteState(route);
-      setSharedGameAccess(null);
       setSharedGameError("");
       if (route) {
+        const routeKey = `${route.roomId}:${route.gameId}`;
+        // 選手詳細から試合画面へ戻るだけなら、同じ試合を再読込しない。
+        // 進行中の操作履歴もここで保持する。
+        if (loadedSharedGameKey.current === routeKey) {
+          setView("shared-game");
+          return;
+        }
+        setSharedGameAccess(null);
         setSharedGameLoading(true);
         setView("shared-game");
-      } else
+      } else {
+        setSharedGameAccess(null);
         setView(
           viewerSession
             ? "viewer-list"
@@ -501,6 +519,7 @@ function App() {
                 ? "mypage"
                 : "entry",
         );
+      }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -544,7 +563,15 @@ function App() {
         setRunnerPitchers(saved.runnerPitchers ?? {});
         setResult(saved.result);
         setPlays(saved.plays);
-        setHistory(saved.history);
+        setHistory(
+          saved.history.filter(
+            (entry) =>
+              Number.isInteger(entry.inning) &&
+              (entry.half === "表" || entry.half === "裏") &&
+              validTeam(entry.away) &&
+              validTeam(entry.home),
+          ),
+        );
       }
       if (!cancelled) setPersistenceReady(true);
     };
@@ -610,6 +637,16 @@ function App() {
 
   useEffect(() => {
     if (!authReady || !persistenceReady || !sharedGameRoute) return;
+    const routeKey = `${sharedGameRoute.roomId}:${sharedGameRoute.gameId}`;
+    if (
+      sharedGameAccess !== null &&
+      loadedSharedGameKey.current === routeKey &&
+      loadedSharedGameRevision.current === sharedAccessRevision
+    ) {
+      setSharedGameLoading(false);
+      setView(sharedGameRoute.playerId ? "player-profile" : "game");
+      return;
+    }
     let cancelled = false;
     void Promise.all([
       getGameAccess(sharedGameRoute.roomId, sharedGameRoute.gameId),
@@ -643,6 +680,8 @@ function App() {
         setGameRevision(detail.state?.revision ?? 0);
         setGameSyncError("");
         setSharedGameAccess(access);
+        loadedSharedGameKey.current = routeKey;
+        loadedSharedGameRevision.current = sharedAccessRevision;
         setGame(selected);
         setAway(nextAway);
         setHome(nextHome);
@@ -706,7 +745,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, persistenceReady, sharedAccessRevision, sharedGameRoute]);
+  }, [
+    authReady,
+    persistenceReady,
+    sharedAccessRevision,
+    sharedGameAccess,
+    sharedGameRoute,
+  ]);
 
   useEffect(() => {
     // 管理者はローカルの最新状態を先に表示して保存する。自分の保存通知で
@@ -753,24 +798,45 @@ function App() {
       game.id !== sharedGameRoute.gameId
     )
       return;
-    const state = {
+    const pendingUndo = pendingUndoSnapshot.current;
+    const progress = pendingUndo ?? {
       inning,
-      half: half === "表" ? ("top" as const) : ("bottom" as const),
+      half,
       balls,
       strikes,
       outs,
-      batter_order: batters[half === "表" ? "away" : "home"],
-      away_score: awayScore,
-      home_score: homeScore,
+      batter,
+      batters,
+      away,
+      home,
+      awayScore,
+      homeScore,
+      inningScores,
+      runners,
+      runnerPitchers,
+      result,
+      plays,
+    };
+    const state = {
+      inning: progress.inning,
+      half: progress.half === "表" ? ("top" as const) : ("bottom" as const),
+      balls: progress.balls,
+      strikes: progress.strikes,
+      outs: progress.outs,
+      batter_order:
+        progress.batters?.[progress.half === "表" ? "away" : "home"] ??
+        progress.batter,
+      away_score: progress.awayScore,
+      home_score: progress.homeScore,
       snapshot: {
         version: 1,
-        teams: { away, home },
-        batters,
-        inningScores,
-        runners,
-        runnerPitchers,
-        result,
-        plays,
+        teams: { away: progress.away, home: progress.home },
+        batters: progress.batters ?? { away: progress.batter, home: 0 },
+        inningScores: progress.inningScores ?? emptyInningScores(),
+        runners: progress.runners,
+        runnerPitchers: progress.runnerPitchers ?? {},
+        result: progress.result,
+        plays: progress.plays,
       },
     };
     const signature = `${game.id}:${JSON.stringify(state)}`;
@@ -782,7 +848,7 @@ function App() {
     const hasPendingEvent =
       pendingGameEvents.current.length > 0 ||
       pendingPlateAppearance.current !== null ||
-      pendingPlateAppearanceUndo.current;
+      pendingUndo !== null;
     if (
       gameSyncInFlight.current ||
       (!hasPendingEvent && lastGameSyncSignature.current === signature)
@@ -791,14 +857,16 @@ function App() {
     const timer = window.setTimeout(() => {
       const pending = pendingPlateAppearance.current;
       const pendingGameEvent = pendingGameEvents.current[0];
-      const revertsPlateAppearance = pendingPlateAppearanceUndo.current;
       gameSyncInFlight.current = true;
-      void applyGameEvent(game.id, {
+      const event: GameEventUpdate = {
         expectedRevision: gameRevision,
         clientEventId: crypto.randomUUID(),
         eventType:
-          pending?.eventType ?? pendingGameEvent?.eventType ?? "state_changed",
+          pendingUndo
+            ? "state_reverted"
+            : pending?.eventType ?? pendingGameEvent?.eventType ?? "state_changed",
         description:
+          (pendingUndo ? "一つ前の操作を取り消しました" : undefined) ??
           pending?.description ??
           pendingGameEvent?.description ??
           plays[0] ??
@@ -810,7 +878,7 @@ function App() {
             : game.status === "試合前"
               ? "before"
               : "live",
-        plateAppearance: pending
+        plateAppearance: !pendingUndo && pending
           ? {
               batter: {
                 key: pending.batter.id,
@@ -831,8 +899,10 @@ function App() {
               half: pending.half,
             }
           : undefined,
-        revertLastPlateAppearance: revertsPlateAppearance,
-      })
+      };
+      void (pendingUndo
+        ? revertGameEvent(game.id, event)
+        : applyGameEvent(game.id, event))
         .then((saved) => {
           lastGameSyncSignature.current = signature;
           setGameRevision(saved.revision);
@@ -854,8 +924,12 @@ function App() {
           if (pendingGameEvents.current[0] === pendingGameEvent) {
             pendingGameEvents.current.shift();
           }
-          if (revertsPlateAppearance) pendingPlateAppearanceUndo.current = false;
+          if (pendingUndoSnapshot.current === pendingUndo) {
+            pendingUndoSnapshot.current = null;
+            setUndoing(false);
+          }
           gameSyncInFlight.current = false;
+          setUndoReady(true);
           // 通信中に続けて操作された場合は、次のrenderで最新状態を送信する。
           setGameSyncTick((tick) => tick + 1);
         });
@@ -865,6 +939,7 @@ function App() {
     away,
     awayScore,
     balls,
+    batter,
     batters,
     game,
     half,
@@ -902,14 +977,20 @@ function App() {
       fieldingTeam.players[0] ??
       fallbackPlayer;
   const snapshot = (completedPlateAppearance = false) => {
+    if (!isLiveGame) return;
+    if (sharedGameRoute && sharedGameAccess === "owner") setUndoReady(false);
     setHistory((h) =>
       [
         {
+          inning,
+          half,
           balls,
           strikes,
           outs,
           batter,
           batters,
+          away,
+          home,
           awayScore,
           homeScore,
           inningScores,
@@ -970,23 +1051,49 @@ function App() {
   };
   const undo = () => {
     const [previous, ...rest] = history;
-    if (!previous) return;
+    if (!previous || undoing || !undoReady || pendingUndoSnapshot.current) return;
     pendingInningStart.current = null;
     if (inningStartTimer.current !== null) {
       window.clearTimeout(inningStartTimer.current);
       inningStartTimer.current = null;
     }
     pendingPlateAppearance.current = null;
-    pendingPlateAppearanceUndo.current = Boolean(
-      previous.completedPlateAppearance,
-    );
+    pendingGameEvents.current = [];
+    pendingUndoSnapshot.current = previous;
+    setUndoing(true);
+    setInning(previous.inning);
+    setHalf(previous.half);
     setBalls(previous.balls);
     setStrikes(previous.strikes);
     setOuts(previous.outs);
     setBatter(previous.batter);
     setBatters(previous.batters ?? { away: previous.batter, home: 0 });
+    setAway(previous.away);
+    setHome(previous.home);
+    if (game)
+      setGameTeams((cache) => ({
+        ...cache,
+        [game.id]: { away: previous.away, home: previous.home },
+      }));
     setAwayScore(previous.awayScore);
     setHomeScore(previous.homeScore);
+    if (game)
+      setSelectedRoom((room) =>
+        room
+          ? {
+              ...room,
+              games: room.games.map((item) =>
+                item.id === game.id
+                  ? {
+                      ...item,
+                      away: { ...item.away, score: previous.awayScore },
+                      home: { ...item.home, score: previous.homeScore },
+                    }
+                  : item,
+              ),
+            }
+          : room,
+      );
     setInningScores(previous.inningScores ?? emptyInningScores());
     setRunners(previous.runners);
     setRunnerPitchers(previous.runnerPitchers ?? {});
@@ -1040,7 +1147,7 @@ function App() {
       setBatter(nextBatter);
       return { ...current, [battingSide]: nextBatter };
     });
-  const changeHalf = (showStartAfterDelay = false) => {
+  const changeHalf = () => {
     if (!isLiveGame) return;
     const nextHalf = half === "表" ? "裏" : "表",
       nextInning = half === "裏" ? inning + 1 : inning;
@@ -1056,7 +1163,6 @@ function App() {
     setRunners({});
     setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
-    if (!showStartAfterDelay) return;
     const token = crypto.randomUUID();
     pendingInningStart.current = token;
     if (inningStartTimer.current !== null)
@@ -1077,7 +1183,7 @@ function App() {
     log(text);
     resetCount();
     next();
-    if (outs === 2) changeHalf(true);
+    if (outs === 2) changeHalf();
     else setOuts((o) => o + 1);
     setResultType(null);
   };
@@ -1220,7 +1326,7 @@ function App() {
     log("犠牲フライ");
     resetCount();
     next();
-    if (outs === 2) changeHalf(true);
+    if (outs === 2) changeHalf();
     else setOuts((current) => current + 1);
     setResultType(null);
   };
@@ -1336,6 +1442,7 @@ function App() {
         outgoing = players[index];
       if (!incoming) return;
       if (outgoing) {
+        snapshot();
         const replacement = { ...incoming, pos: outgoing.pos, avg: outgoing.avg };
         players[index] = replacement;
         bench.push(outgoing);
@@ -1349,6 +1456,11 @@ function App() {
     }
     const fromList = [...from[fromKey]],
       [player] = fromList.splice(activeDrag.index, 1);
+    if (!player) {
+      setDrag(null);
+      return;
+    }
+    snapshot();
     const destList =
       activeDrag.team === to && fromKey === destKey
         ? fromList
@@ -1388,6 +1500,7 @@ function App() {
     if (sourceBench >= 0) bench.splice(sourceBench, 1);
     if (key === "players") {
       const replacement = { ...member, pos: old.pos, avg: old.avg };
+      snapshot();
       players[slotIndex] = replacement;
       recordSubstitution(old, replacement);
     } else bench[slotIndex] = { ...member, pos: old.pos, avg: old.avg };
@@ -1405,6 +1518,7 @@ function App() {
       list = [...t[area]];
     const player = list[i];
     if (!player || player.pos === pos) return;
+    snapshot();
     if (area === "players" && positions.slice(0, 9).includes(pos)) {
       const swappedIndex = list.findIndex(
         (candidate, index) => index !== i && candidate.pos === pos,
@@ -1456,6 +1570,11 @@ function App() {
         const displaced = players[target],
           draggedPosition = dragged.pos,
           displacedPosition = displaced.pos;
+        if (target === activeDrag.index) {
+          setDrag(null);
+          return;
+        }
+        snapshot();
         // Keep the original positions for the event record. Mutating the
         // existing Player objects here made both changes look like no-ops.
         players[activeDrag.index] = { ...dragged, pos: displacedPosition };
@@ -1466,6 +1585,11 @@ function App() {
         ]);
         updateTeam(which, { ...defending, players });
       } else {
+        if (dragged.pos === pos) {
+          setDrag(null);
+          return;
+        }
+        snapshot();
         players[activeDrag.index] = { ...dragged, pos };
         recordDefensivePositionChange([
           { player: dragged, from: dragged.pos, to: pos },
@@ -1481,10 +1605,14 @@ function App() {
       if (target >= 0) {
         const outgoing = players[target];
         const replacement = { ...incoming, pos, avg: outgoing.avg };
+        snapshot();
         players[target] = replacement;
         bench.push(outgoing);
         recordSubstitution(outgoing, replacement);
-      } else players.push({ ...incoming, pos });
+      } else {
+        snapshot();
+        players.push({ ...incoming, pos });
+      }
       updateTeam(which, { ...defending, players, bench });
     }
     setDrag(null);
@@ -2187,7 +2315,7 @@ function App() {
           {!isLiveGame && (
             <p className="admin-lock-note">
               {isBeforeGame
-                ? "試合開始前はカウント・打席結果・攻守交代を入力できません。選手・守備位置・打順は上の一覧から編集できます。"
+                ? "試合開始前はカウント・打席結果を入力できません。選手・守備位置・打順は上の一覧から編集できます。"
                 : "試合終了後は試合の操作を入力できません。"}
             </p>
           )}
@@ -2271,15 +2399,9 @@ function App() {
             )}
             <div className="side-control">
               <button
-                onClick={() => {
-                  snapshot();
-                  changeHalf();
-                }}
-                disabled={!isLiveGame}
+                onClick={undo}
+                disabled={!isLiveGame || !history.length || undoing || !undoReady}
               >
-                攻守交代
-              </button>
-              <button onClick={undo} disabled={!isLiveGame || !history.length}>
                 ひとつ前に戻す
               </button>
               <button

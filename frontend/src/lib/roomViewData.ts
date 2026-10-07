@@ -65,7 +65,6 @@ export type GameEventUpdate = {
   description: string;
   state: Required<GameStateUpdate>;
   status: GameRow["status"];
-  revertLastPlateAppearance?: boolean;
   plateAppearance?: {
     batter: { key: string; lastName: string; firstName: string };
     pitcher: { key: string; lastName: string; firstName: string };
@@ -259,6 +258,8 @@ export async function loadViewerGameDetail(
       .from("game_events")
       .select("id, sequence, inning, half, event_type, description, occurred_at")
       .eq("game_id", gameId)
+      .is("reverted_at", null)
+      .neq("event_type", "state_reverted")
       .order("sequence", { ascending: false }),
   ]);
 
@@ -334,8 +335,7 @@ export async function applyGameEvent(
       event.plateAppearance?.responsiblePitcherKeys ?? [],
     target_base_runners_before:
       event.plateAppearance?.baseRunnersBefore ?? 0,
-    target_revert_last_plate_appearance:
-      event.revertLastPlateAppearance ?? false,
+    target_revert_last_plate_appearance: false,
     target_plate_inning: event.plateAppearance?.inning ?? null,
     target_plate_half: event.plateAppearance?.half ?? null,
   });
@@ -343,6 +343,40 @@ export async function applyGameEvent(
   const saved = Array.isArray(data) ? data[0] : data;
   if (!saved || typeof saved.revision !== "number" || !saved.updated_at) {
     throw new Error("試合更新結果を確認できませんでした。");
+  }
+  return { revision: saved.revision, updatedAt: saved.updated_at };
+}
+
+/**
+ * 直近の有効な試合操作を取り消し、指定された完全な試合状態を同一トランザクションで保存する。
+ * 打席結果を無効化する場合も、成績集計は reverted_at を参照するため自動的に更新される。
+ */
+export async function revertGameEvent(
+  gameId: string,
+  event: Pick<
+    GameEventUpdate,
+    "expectedRevision" | "clientEventId" | "state" | "status"
+  >,
+): Promise<GameEventUpdateResult> {
+  const { data, error } = await requireClient().rpc("revert_game_event", {
+    target_game_id: gameId,
+    expected_revision: event.expectedRevision,
+    target_client_event_id: event.clientEventId,
+    target_inning: event.state.inning,
+    target_half: event.state.half,
+    target_balls: event.state.balls,
+    target_strikes: event.state.strikes,
+    target_outs: event.state.outs,
+    target_batter_order: event.state.batter_order,
+    target_away_score: event.state.away_score,
+    target_home_score: event.state.home_score,
+    target_snapshot: event.state.snapshot,
+    target_status: event.status,
+  });
+  if (error) throw error;
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved || typeof saved.revision !== "number" || !saved.updated_at) {
+    throw new Error("試合の復元結果を確認できませんでした。");
   }
   return { revision: saved.revision, updatedAt: saved.updated_at };
 }
