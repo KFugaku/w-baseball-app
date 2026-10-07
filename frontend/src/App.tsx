@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { loadSnapshot, saveSnapshot } from "./lib/persistence";
 import {
   createOwnedGame,
@@ -67,7 +67,12 @@ import "./RoomAccess.css";
 
 type Base = 1 | 2 | 3;
 type Member = { id: string; last: string; first: string };
-type Player = Member & { pos: string; avg: string };
+type Player = Member & {
+  pos: string;
+  avg: string;
+  /** 交代で一度ベンチへ退いた選手は、試合中は再び打順へ戻せない。 */
+  substitutedOut?: boolean;
+};
 type PlayerProfile = { player: Player; teamName: string };
 type PlayerProfileTab = "batting" | "pitching" | "plate-appearances";
 type Team = { name: string; color: string; players: Player[]; bench: Player[] };
@@ -139,8 +144,21 @@ type PersistedAppState = {
   plays: string[];
   history: Snapshot[];
 };
-const positions = ["投", "捕", "一", "二", "三", "遊", "左", "中", "右", "打"];
+const positions = [
+  "投",
+  "捕",
+  "一",
+  "二",
+  "三",
+  "遊",
+  "左",
+  "中",
+  "右",
+  "打",
+  "走",
+];
 const slots = ["左", "中", "右", "三", "遊", "二", "一", "投", "捕"];
+const MAX_LINEUP_PLAYERS = 9;
 const initialMembers: Member[] = [
   ["田中", "太郎"],
   ["佐藤", "健"],
@@ -212,6 +230,12 @@ type DragState = {
   team: "away" | "home";
   area: "players" | "bench";
   index: number;
+} | null;
+type LineupDropTarget = {
+  team: TeamSide;
+  area: "players" | "bench";
+  index: number;
+  mode: "insert" | "replace";
 } | null;
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
@@ -375,6 +399,8 @@ function App() {
       Record<string, { away: Team; home: Team }>
     >({}),
     [drag, setDragState] = useState<DragState>(null),
+    [lineupDropTarget, setLineupDropTarget] =
+      useState<LineupDropTarget>(null),
     [pick, setPick] = useState<{
       team: "away" | "home";
       area: "players" | "bench";
@@ -415,6 +441,7 @@ function App() {
   const setDrag = (value: DragState) => {
     dragRef.current = value;
     setDragState(value);
+    if (!value) setLineupDropTarget(null);
   };
 
   useEffect(
@@ -714,7 +741,7 @@ function App() {
             : detail.events.length
               ? detail.events.map(
                   (event) =>
-                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? `選手交代: ${event.description}` : event.event_type === "defensive_position_change" ? `守備変更: ${event.description}` : event.description}`,
+                    `${event.inning}回${event.half === "top" ? "表" : "裏"} ${event.event_type === "player_substitution" ? (/^(代打|代走|守備交代):/.test(event.description) ? event.description : `選手交代: ${event.description}`) : event.event_type === "defensive_position_change" ? `守備変更: ${event.description}` : event.description}`,
                 )
               : [
                   `${detail.state?.inning ?? 1}回${detail.state?.half === "bottom" ? "裏" : "表"}`,
@@ -1006,6 +1033,7 @@ function App() {
   };
   const startGame = () => {
     if (!canEditGame || !game || !isBeforeGame) return;
+    setDrag(null);
     setGame((current) =>
       current ? { ...current, status: "速報中" } : current,
     );
@@ -1395,9 +1423,14 @@ function App() {
       incoming.id.startsWith("slot-")
     )
       return;
-    const position = incoming.pos || outgoing.pos || "打";
-    const description = `${outgoing.last} ${outgoing.first} → ${incoming.last} ${incoming.first}（${position}）`;
-    const display = `選手交代: ${description}`;
+    const kind =
+      incoming.pos === "打"
+        ? "代打"
+        : incoming.pos === "走"
+          ? "代走"
+          : "守備交代";
+    const description = `${kind}: ${outgoing.last} ${outgoing.first}（${outgoing.pos}）→${incoming.last} ${incoming.first}（${incoming.pos}）`;
+    const display = description;
     pendingGameEvents.current.push({
       eventType: "player_substitution",
       description,
@@ -1428,19 +1461,92 @@ function App() {
     to: "away" | "home",
     area: "players" | "bench",
     index: number,
+    dropMode: "insert" | "replace" = "replace",
   ) => {
+    if (!canEditGame || (!isBeforeGame && !isLiveGame)) {
+      setDrag(null);
+      return;
+    }
     const activeDrag = dragRef.current ?? drag;
     if (!activeDrag) return;
     const from = team(activeDrag.team),
       dest = team(to),
       fromKey = activeDrag.area,
       destKey = area;
+    if (isLiveGame) {
+      // 試合中はベンチと打順の間だけで交代する。攻撃側は打者・走者、
+      // 守備側は任意の守備者を交代対象にできる。
+      if (
+        activeDrag.team !== to ||
+        fromKey === destKey
+      ) {
+        setDrag(null);
+        return;
+      }
+      const players = [...from.players],
+        bench = [...from.bench],
+        outgoingIndex = fromKey === "players" ? activeDrag.index : index,
+        incomingIndex = fromKey === "bench" ? activeDrag.index : index,
+        outgoing = players[outgoingIndex],
+        incoming = bench[incomingIndex];
+      if (!outgoing || !incoming || incoming.substitutedOut) {
+        setDrag(null);
+        return;
+      }
+      const runnerBases = ([1, 2, 3] as Base[]).filter(
+        (base) => runners[base] === outgoing.last,
+      );
+      const isCurrentBatter =
+        to === battingSide &&
+        players.length > 0 &&
+        outgoing.id === players[batters[to] % players.length]?.id;
+      const isRunner = to === battingSide && runnerBases.length > 0;
+      if (to === battingSide && !isCurrentBatter && !isRunner) {
+        setDrag(null);
+        return;
+      }
+      snapshot();
+      const replacement = {
+        ...incoming,
+        pos:
+          to === fieldingSide ? outgoing.pos : isRunner ? "走" : "打",
+        avg: outgoing.avg,
+        substitutedOut: false,
+      };
+      players[outgoingIndex] = replacement;
+      bench.splice(incomingIndex, 1);
+      // 交代済み選手は、未使用のベンチ選手の後ろへ固定する。
+      bench.push({ ...outgoing, pos: "打", substitutedOut: true });
+      if (isRunner) {
+        setRunners((current) => {
+          const next = { ...current };
+          runnerBases.forEach((base) => {
+            next[base] = replacement.last;
+          });
+          return next;
+        });
+      }
+      recordSubstitution(outgoing, replacement);
+      updateTeam(to, { ...from, players, bench });
+      setDrag(null);
+      return;
+    }
     if (activeDrag.team === to && fromKey === "bench" && destKey === "players") {
       const bench = [...from.bench],
         [incoming] = bench.splice(activeDrag.index, 1),
         players = [...from.players],
         outgoing = players[index];
       if (!incoming) return;
+      if (dropMode === "insert") {
+        if (players.length >= MAX_LINEUP_PLAYERS) {
+          setDrag(null);
+          return;
+        }
+        players.splice(index, 0, { ...incoming, pos: "打" });
+        updateTeam(to, { ...from, players, bench });
+        setDrag(null);
+        return;
+      }
       if (outgoing) {
         snapshot();
         const replacement = { ...incoming, pos: outgoing.pos, avg: outgoing.avg };
@@ -1448,6 +1554,10 @@ function App() {
         bench.push(outgoing);
         recordSubstitution(outgoing, replacement);
       } else {
+        if (players.length >= MAX_LINEUP_PLAYERS) {
+          setDrag(null);
+          return;
+        }
         players.splice(index, 0, { ...incoming, pos: "打" });
       }
       updateTeam(to, { ...from, players, bench });
@@ -1457,6 +1567,14 @@ function App() {
     const fromList = [...from[fromKey]],
       [player] = fromList.splice(activeDrag.index, 1);
     if (!player) {
+      setDrag(null);
+      return;
+    }
+    if (
+      destKey === "players" &&
+      dest.players.length >= MAX_LINEUP_PLAYERS &&
+      (activeDrag.team !== to || fromKey !== "players")
+    ) {
       setDrag(null);
       return;
     }
@@ -1507,6 +1625,21 @@ function App() {
     updateTeam(pick.team, { ...target, players, bench });
     setPick(null);
   };
+  const cancelMemberPick = () => {
+    if (!pick) return;
+    const target = team(pick.team),
+      list = target[pick.area],
+      pendingPlayer = list.find((player) => player.id === pick.slotId);
+    // 「選手を追加」で作った仮の行だけを取り除く。既存選手の変更を
+    // キャンセルしたときは、元の選手をそのまま残す。
+    if (pendingPlayer?.id.startsWith("slot-")) {
+      updateTeam(pick.team, {
+        ...target,
+        [pick.area]: list.filter((player) => player.id !== pick.slotId),
+      });
+    }
+    setPick(null);
+  };
   const changePosition = (
     which: "away" | "home",
     area: "players" | "bench",
@@ -1539,7 +1672,16 @@ function App() {
     } else list[i] = { ...player, pos };
     updateTeam(which, { ...t, [area]: list });
   };
-  const addPlayer = (which: "away" | "home") => {
+  const addPlayer = (
+    which: "away" | "home",
+    area: "players" | "bench",
+  ) => {
+    if (
+      !canManageRoster ||
+      (!isBeforeGame && !(area === "bench" && isLiveGame)) ||
+      (area === "players" && team(which).players.length >= MAX_LINEUP_PLAYERS)
+    )
+      return;
     const t = team(which),
       slotId = `slot-${crypto.randomUUID()}`,
       player: Player = {
@@ -1549,8 +1691,29 @@ function App() {
         pos: "打",
         avg: "---",
       };
-    updateTeam(which, { ...t, players: [...t.players, player] });
-    setPick({ team: which, area: "players", slotId });
+    const nextList =
+      area === "bench"
+        ? [
+            ...t.bench.filter((item) => !item.substitutedOut),
+            player,
+            ...t.bench.filter((item) => item.substitutedOut),
+          ]
+        : [...t.players, player];
+    updateTeam(which, { ...t, [area]: nextList });
+    setPick({ team: which, area, slotId });
+  };
+  const deleteLineupPlayer = (
+    which: TeamSide,
+    area: "players" | "bench",
+    index: number,
+  ) => {
+    if (!canEditGame || !isBeforeGame) return;
+    const target = team(which),
+      list = [...target[area]];
+    if (!list[index]) return;
+    list.splice(index, 1);
+    updateTeam(which, { ...target, [area]: list });
+    setDrag(null);
   };
   const dropOnField = (
     which: TeamSide,
@@ -2274,17 +2437,32 @@ function App() {
         away={away}
         home={home}
         admin={canEditGame}
+        canReorderLineup={canEditGame && isBeforeGame}
         canEditDefense={{
           away: canEditDefense("away"),
           home: canEditDefense("home"),
         }}
-        allowMemberChanges={canManageRoster}
+        allowMemberChanges={{
+          away:
+            canManageRoster && (!isLiveGame || canEditDefense("away")),
+          home:
+            canManageRoster && (!isLiveGame || canEditDefense("home")),
+        }}
+        allowStarterAdd={canManageRoster && isBeforeGame}
+        allowBenchAdd={canManageRoster && (isBeforeGame || isLiveGame)}
+        batters={batters}
+        battingSide={battingSide}
+        runners={runners}
+        isLiveGame={isLiveGame}
         drag={drag}
         setDrag={setDrag}
+        lineupDropTarget={lineupDropTarget}
+        setLineupDropTarget={setLineupDropTarget}
         move={move}
         setPick={setPick}
         changePosition={changePosition}
         addPlayer={addPlayer}
+        deletePlayer={deleteLineupPlayer}
         onOpenPlayer={openPlayerProfile}
       />
       <section className="history card">
@@ -2455,7 +2633,7 @@ function App() {
                 ].map((player) => player.id)
               : []
           }
-          close={() => setPick(null)}
+          close={cancelMemberPick}
           select={selectMember}
         />
       )}
@@ -3202,13 +3380,11 @@ function Play({
       <div className="play substitution-play">
         <span>{inning}</span>
         <div className="substitution-play-detail">
-          <small>選手交代・{substitution.position}</small>
           <div>
-            <Avatar name={substitution.outgoing} small />
-            <b>{substitution.outgoing}</b>
-            <strong className="substitution-arrow">→</strong>
-            <Avatar name={substitution.incoming} small />
-            <b>{substitution.incoming}</b>
+            <b>
+              {substitution.kind}: {substitution.outgoing}（{substitution.outgoingPosition}）→
+              {substitution.incoming}（{substitution.incomingPosition}）
+            </b>
           </div>
         </div>
       </div>
@@ -3226,14 +3402,34 @@ function Play({
   );
 }
 type SubstitutionDetails = {
+  kind: "代打" | "代走" | "守備交代" | "選手交代";
   outgoing: string;
+  outgoingPosition: string;
   incoming: string;
-  position: string;
+  incomingPosition: string;
 };
 const parseSubstitution = (value: string): SubstitutionDetails | null => {
-  const match = value.match(/^選手交代:\s*(.+?)\s*→\s*(.+?)（(.+?)）$/);
-  return match
-    ? { outgoing: match[1], incoming: match[2], position: match[3] }
+  const match = value.match(
+    /^(代打|代走|守備交代):\s*(.+?)（(.+?)）→(.+?)（(.+?)）$/,
+  );
+  if (match)
+    return {
+      kind: match[1] as SubstitutionDetails["kind"],
+      outgoing: match[2],
+      outgoingPosition: match[3],
+      incoming: match[4],
+      incomingPosition: match[5],
+    };
+  // 保存済みの旧形式も、履歴を壊さずに表示できるよう維持する。
+  const legacy = value.match(/^選手交代:\s*(.+?)\s*→\s*(.+?)（(.+?)）$/);
+  return legacy
+    ? {
+        kind: "選手交代",
+        outgoing: legacy[1],
+        outgoingPosition: legacy[3],
+        incoming: legacy[2],
+        incomingPosition: legacy[3],
+      }
     : null;
 };
 function ResultBanner({ result }: { result: string }) {
@@ -3243,24 +3439,19 @@ function ResultBanner({ result }: { result: string }) {
   if (substitution)
     return (
       <div className="result-banner substitution-banner">
-        <span>選手交代</span>
         <strong>
-          <Avatar name={substitution.outgoing} small />
-          {substitution.outgoing}
-          <b className="substitution-arrow">→</b>
-          <Avatar name={substitution.incoming} small />
-          {substitution.incoming}
+          {substitution.kind}: {substitution.outgoing}（{substitution.outgoingPosition}）→
+          {substitution.incoming}（{substitution.incomingPosition}）
         </strong>
-        <small>{substitution.position}</small>
       </div>
     );
   return (
     <div
       className={`result-banner ${defensiveChange ? "defensive-change-banner" : ""} ${["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)) ? "outcome-out" : ""}`}
     >
-      <span>
-        {defensiveChange ? "守備変更" : inningStart ? "イニング開始" : "打席結果"}
-      </span>
+      {!defensiveChange && (
+        <span>{inningStart ? "イニング開始" : "打席結果"}</span>
+      )}
       <strong>{result}</strong>
     </div>
   );
@@ -3617,6 +3808,7 @@ function Field({
                 if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
                 setDrag(payload);
               }}
+              onDragEnd={() => setDrag(null)}
               onDragOver={(event: any) => {
                 if (!admin) return;
                 event.preventDefault();
@@ -3659,14 +3851,24 @@ function Lineups({
   away,
   home,
   admin,
+  canReorderLineup,
   canEditDefense,
   allowMemberChanges,
+  allowStarterAdd,
+  allowBenchAdd,
+  batters,
+  battingSide,
+  runners,
+  isLiveGame,
   drag,
   setDrag,
+  lineupDropTarget,
+  setLineupDropTarget,
   move,
   setPick,
   changePosition,
   addPlayer,
+  deletePlayer,
   onOpenPlayer,
 }: any) {
   return (
@@ -3674,7 +3876,11 @@ function Lineups({
       <div className="section-title">
         <span>メンバー・打順</span>
         <small>
-          {admin ? "追加・ドラッグで編集できます" : "両チームの打順"}
+          {canReorderLineup
+            ? "打順はドラッグで編集できます"
+            : admin
+              ? "試合中は打順固定・ベンチとの交代のみ可能です"
+              : "両チームの打順"}
         </small>
       </div>
       <div className="lineup-head">
@@ -3687,14 +3893,31 @@ function Lineups({
           id="away"
           {...{
             admin,
+            canReorderLineup,
             canEditPositions: canEditDefense.away,
-            allowMemberChanges,
+            allowMemberChanges: allowMemberChanges.away,
+            allowStarterAdd,
+            allowBenchAdd,
+            currentBatterIndex:
+              isLiveGame && battingSide === "away" && away.players.length
+                ? batters.away % away.players.length
+                : null,
+            canSubstituteWithBench: isLiveGame && admin,
+            battingSide,
+            runnerNames: Object.values(runners),
+            nextBatterIndex:
+              isLiveGame && battingSide !== "away" && away.players.length
+                ? batters.away % away.players.length
+                : null,
             drag,
             setDrag,
+            lineupDropTarget,
+            setLineupDropTarget,
             move,
             setPick,
             changePosition,
             addPlayer,
+            deletePlayer,
             onOpenPlayer,
           }}
         />
@@ -3703,14 +3926,31 @@ function Lineups({
           id="home"
           {...{
             admin,
+            canReorderLineup,
             canEditPositions: canEditDefense.home,
-            allowMemberChanges,
+            allowMemberChanges: allowMemberChanges.home,
+            allowStarterAdd,
+            allowBenchAdd,
+            currentBatterIndex:
+              isLiveGame && battingSide === "home" && home.players.length
+                ? batters.home % home.players.length
+                : null,
+            canSubstituteWithBench: isLiveGame && admin,
+            battingSide,
+            runnerNames: Object.values(runners),
+            nextBatterIndex:
+              isLiveGame && battingSide !== "home" && home.players.length
+                ? batters.home % home.players.length
+                : null,
             drag,
             setDrag,
+            lineupDropTarget,
+            setLineupDropTarget,
             move,
             setPick,
             changePosition,
             addPlayer,
+            deletePlayer,
             onOpenPlayer,
           }}
         />
@@ -3722,14 +3962,25 @@ function Lineup({
   team,
   id,
   admin,
+  canReorderLineup,
   canEditPositions,
   allowMemberChanges,
+  allowStarterAdd,
+  allowBenchAdd,
+  currentBatterIndex,
+  nextBatterIndex,
+  canSubstituteWithBench,
+  battingSide,
+  runnerNames,
   drag,
   setDrag,
+  lineupDropTarget,
+  setLineupDropTarget,
   move,
   setPick,
   changePosition,
   addPlayer,
+  deletePlayer,
   onOpenPlayer,
 }: any) {
   const [lockedPositionIndex, setLockedPositionIndex] = useState<number | null>(
@@ -3752,81 +4003,268 @@ function Lineup({
       lockedPositionTimer.current = null;
     }, 500);
   };
-  const row = (p: Player, i: number, area: "players" | "bench") => (
-    <div
-      className={`lineup-row ${drag?.team === id && drag.index === i ? "dragging" : ""}`}
-      key={p.id}
-      draggable={admin}
-      onDragStart={() => setDrag({ team: id, area, index: i })}
-      onDragOver={(e: any) => admin && e.preventDefault()}
-      onDrop={() => move(id, area, i)}
-    >
-      <span>{area === "players" ? i + 1 : "・"}</span>
-      {admin ? (
-        canEditPositions ? (
-          <select
-            value={p.pos}
-            onChange={(e) => changePosition(id, area, i, e.target.value)}
-          >
-            {positions.map((pos) => (
-              <option key={pos}>{pos}</option>
-            ))}
-          </select>
+  const lineupFull = team.players.length >= MAX_LINEUP_PLAYERS;
+  const canReplacePlayer = (player: Player, index: number) =>
+    !canSubstituteWithBench ||
+    id !== battingSide ||
+    index === currentBatterIndex ||
+    runnerNames.includes(player.last);
+  const insertionZone = (index: number) => {
+    const canInsert =
+      canReorderLineup &&
+      drag?.team === id &&
+      drag.area === "bench" &&
+      !lineupFull;
+    const highlighted =
+      lineupDropTarget?.team === id &&
+      lineupDropTarget.area === "players" &&
+      lineupDropTarget.index === index &&
+      lineupDropTarget.mode === "insert";
+    if (!canReorderLineup || lineupFull) return null;
+    return (
+      <div
+        className={`lineup-insert-zone ${highlighted ? "drop-insert" : ""}`}
+        onDragEnter={(event: any) => {
+          if (!canInsert) return;
+          event.preventDefault();
+          setLineupDropTarget({
+            team: id,
+            area: "players",
+            index,
+            mode: "insert",
+          });
+        }}
+        onDragOver={(event: any) => {
+          if (!canInsert) return;
+          event.preventDefault();
+          setLineupDropTarget({
+            team: id,
+            area: "players",
+            index,
+            mode: "insert",
+          });
+        }}
+        onDrop={() => {
+          if (canInsert) move(id, "players", index, "insert");
+        }}
+      />
+    );
+  };
+  const row = (p: Player, i: number, area: "players" | "bench") => {
+    const canDragForSubstitution =
+      canSubstituteWithBench &&
+      !p.substitutedOut &&
+      (area === "bench" || canReplacePlayer(p, i));
+    const canDrag = canReorderLineup || canDragForSubstitution;
+    const draggedPlayer =
+      drag?.team === id && drag.area === "players"
+        ? team.players[drag.index]
+        : undefined;
+    const canAcceptReplacement =
+      Boolean(drag) &&
+      drag?.team === id &&
+      drag.area !== area &&
+      !p.substitutedOut &&
+      !draggedPlayer?.substitutedOut &&
+      (!draggedPlayer || canReplacePlayer(draggedPlayer, drag.index)) &&
+      (area === "bench" || canReplacePlayer(p, i)) &&
+      (canReorderLineup || canSubstituteWithBench);
+    const canReorderAtRow =
+      canReorderLineup &&
+      drag?.team === id &&
+      drag.area === "players" &&
+      area === "players";
+    const isDragSource =
+      drag?.team === id && drag.area === area && drag.index === i;
+    // ドラッグ中は、実際に交代または並び替えできる行だけを通常表示にする。
+    // これにより「置けない場所」が一目で分かる。
+    const isUnavailableWhileDragging =
+      Boolean(drag) &&
+      !isDragSource &&
+      !canAcceptReplacement &&
+      !canReorderAtRow;
+    const replacementHighlighted =
+      lineupDropTarget?.team === id &&
+      lineupDropTarget.area === area &&
+      lineupDropTarget.index === i &&
+      lineupDropTarget.mode === "replace";
+    const reorderHighlighted =
+      lineupDropTarget?.team === id &&
+      lineupDropTarget.area === "players" &&
+      lineupDropTarget.index === i &&
+      lineupDropTarget.mode === "insert";
+    const isCurrentBatter = area === "players" && currentBatterIndex === i;
+    const isNextBatter = area === "players" && nextBatterIndex === i;
+    return (
+      <div
+        className={`lineup-row ${p.substitutedOut ? "substituted-out" : ""} ${replacementHighlighted ? "drop-replace" : ""} ${reorderHighlighted ? "drop-reorder" : ""} ${isDragSource ? "dragging" : ""} ${isUnavailableWhileDragging ? "drag-unavailable" : ""} ${
+          isCurrentBatter
+            ? "current-batter"
+            : isNextBatter
+              ? "next-batter"
+              : ""
+        }`}
+        key={p.id}
+        draggable={canDrag}
+        style={
+          isCurrentBatter
+            ? ({ "--lineup-team-color": team.color } as React.CSSProperties)
+            : undefined
+        }
+        onDragStart={() => {
+          if (canDrag) setDrag({ team: id, area, index: i });
+        }}
+        onDragEnd={() => setDrag(null)}
+        onDragEnter={(event: any) => {
+          if (canAcceptReplacement) {
+            event.preventDefault();
+            setLineupDropTarget({
+              team: id,
+              area,
+              index: i,
+              mode: "replace",
+            });
+          } else if (canReorderAtRow) {
+            event.preventDefault();
+            setLineupDropTarget({
+              team: id,
+              area: "players",
+              index: i,
+              mode: "insert",
+            });
+          }
+        }}
+        onDragOver={(event: any) => {
+          if (canAcceptReplacement) {
+            event.preventDefault();
+            setLineupDropTarget({
+              team: id,
+              area,
+              index: i,
+              mode: "replace",
+            });
+          } else if (canReorderAtRow) {
+            event.preventDefault();
+            setLineupDropTarget({
+              team: id,
+              area: "players",
+              index: i,
+              mode: "insert",
+            });
+          } else if (canReorderLineup) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={() => {
+          if (canReorderLineup || canAcceptReplacement)
+            move(id, area, i, "replace");
+        }}
+      >
+        <span>{area === "players" ? i + 1 : "・"}</span>
+        {area === "bench" ? (
+          <span className="bench-position-spacer" aria-hidden="true" />
+        ) : admin ? (
+          canEditPositions ? (
+            <select
+              value={p.pos}
+              onChange={(e) => changePosition(id, area, i, e.target.value)}
+            >
+              {positions.map((pos) => (
+                <option key={pos}>{pos}</option>
+              ))}
+            </select>
+          ) : (
+            <div className="locked-position-wrap">
+              <button
+                type="button"
+                className="locked-position"
+                onClick={() => showDefenseLockNotice(i)}
+                aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
+              >
+                {p.pos}
+              </button>
+              {lockedPositionIndex === i && (
+                <span className="defense-locked-popover" role="status">
+                  攻撃中：守備変更はできません
+                </span>
+              )}
+            </div>
+          )
         ) : (
-          <div className="locked-position-wrap">
+          <b>{p.pos}</b>
+        )}
+        <div className="lineup-player-actions">
+          <button
+            className="profile-player"
+            onClick={() => onOpenPlayer({ player: p, teamName: team.name })}
+          >
+            {p.last} {p.first}
+          </button>
+          {allowMemberChanges && (
+            <button
+              className="choose-player"
+              onClick={() => setPick({ team: id, area, slotId: p.id })}
+            >
+              変更
+            </button>
+          )}
+          {canReorderLineup && (
             <button
               type="button"
-              className="locked-position"
-              onClick={() => showDefenseLockNotice(i)}
-              aria-label={`${p.last} ${p.first}の守備位置は攻撃中は変更できません`}
+              className="lineup-delete"
+              aria-label={`${p.last} ${p.first}を削除`}
+              onClick={() => deletePlayer(id, area, i)}
             >
-              {p.pos}
+              🗑
             </button>
-            {lockedPositionIndex === i && (
-              <span className="defense-locked-popover" role="status">
-                攻撃中：守備変更はできません
-              </span>
-            )}
-          </div>
-        )
-      ) : (
-        <b>{p.pos}</b>
-      )}
-      <div className="lineup-player-actions">
-        <button
-          className="profile-player"
-          onClick={() => onOpenPlayer({ player: p, teamName: team.name })}
-        >
-          {p.last} {p.first}
-        </button>
-        {allowMemberChanges && (
-          <button
-            className="choose-player"
-            onClick={() => setPick({ team: id, area, slotId: p.id })}
-          >
-            変更
-          </button>
-        )}
+          )}
+        </div>
+        <em>{p.avg}</em>
       </div>
-      <em>{p.avg}</em>
-    </div>
-  );
+    );
+  };
+  const canDropIntoBench =
+    canReorderLineup && drag?.team === id && drag.area === "players";
   return (
     <div className="team-lineup">
-      {team.players.map((p: Player, i: number) => row(p, i, "players"))}
-      {allowMemberChanges && (
-        <button className="add-lineup-player" onClick={() => addPlayer(id)}>
+      {team.players.map((p: Player, i: number) => (
+        <Fragment key={p.id}>
+          {insertionZone(i)}
+          {row(p, i, "players")}
+        </Fragment>
+      ))}
+      {insertionZone(team.players.length)}
+      {allowStarterAdd && !lineupFull && (
+        <button
+          className="add-lineup-player"
+          onClick={() => addPlayer(id, "players")}
+        >
           ＋ 選手を追加
         </button>
       )}
       <div className="bench-label">ベンチ</div>
       <div
-        className="bench"
-        onDragOver={(e: any) => admin && e.preventDefault()}
-        onDrop={() => move(id, "bench", team.bench.length)}
+        className={`bench ${canDropIntoBench ? "bench-drop-active" : ""}`}
+        onDragEnter={(event: any) => {
+          if (canDropIntoBench) event.preventDefault();
+        }}
+        onDragOver={(event: any) => {
+          if (canDropIntoBench) event.preventDefault();
+        }}
+        onDrop={() => {
+          if (canDropIntoBench) move(id, "bench", team.bench.length);
+        }}
       >
         {team.bench.map((p: Player, i: number) => row(p, i, "bench"))}
-        {admin && <small>ここへドロップ</small>}
+        {allowBenchAdd && (
+          <button
+            className="add-lineup-player add-bench-player"
+            onClick={() => addPlayer(id, "bench")}
+          >
+            ＋ 選手を追加
+          </button>
+        )}
+        {canDropIntoBench && <small>ここへドロップ</small>}
       </div>
     </div>
   );
