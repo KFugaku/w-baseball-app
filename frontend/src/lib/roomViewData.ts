@@ -422,7 +422,35 @@ export async function loadRoomPlayerStatisticSummaries(
       target_player_keys: uniqueKeys,
     },
   );
-  if (error) throw error;
+  if (error) {
+    // 一括取得用のRPCは導入直後でもあるため、SQLマイグレーションの反映待ちや
+    // PostgRESTのスキーマキャッシュ更新中でも画面を止めない。既存の詳細取得RPCは
+    // 同じ権限・同じ集計ロジックを使っているので、安全な互換経路として利用する。
+    const individualStatistics = await Promise.all(
+      uniqueKeys.map(async (playerKey) => ({
+        playerKey,
+        statistics: await loadPlayerStatistics(roomId, playerKey),
+      })),
+    );
+
+    return Object.fromEntries(
+      individualStatistics.map(({ playerKey, statistics }) => [
+        playerKey,
+        {
+          games: statistics.batting.games,
+          at_bats: statistics.batting.at_bats,
+          hits: statistics.batting.hits,
+          home_runs: statistics.batting.home_runs,
+          runs_batted_in: statistics.batting.runs_batted_in,
+          batting_average: statistics.batting.batting_average,
+          appearances: statistics.pitching.appearances,
+          outs_recorded: statistics.pitching.outs_recorded,
+          earned_runs: statistics.pitching.earned_runs,
+          earned_run_average: statistics.pitching.earned_run_average,
+        } satisfies PlayerStatisticSummary,
+      ]),
+    );
+  }
 
   return Object.fromEntries(
     ((data ?? []) as {
