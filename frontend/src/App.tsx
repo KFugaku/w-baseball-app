@@ -17,6 +17,14 @@ import {
   type OwnedRoom,
 } from "./lib/myPageData";
 import {
+  addRoomMember,
+  loadOtherRoomMemberNames,
+  loadRoomMembers,
+  removeRoomMember,
+  roomMemberErrorMessage,
+  updateRoomMember,
+} from "./lib/roomMemberData";
+import {
   getGameAccess,
   loadPlayerStatistics,
   loadViewerGameDetail,
@@ -125,7 +133,6 @@ type GameProgressSnapshot = {
 };
 type PersistedAppState = {
   version: 1;
-  members: Member[];
   games: Game[];
   game: Game | null;
   away: Team;
@@ -211,6 +218,12 @@ const emptyTeam = (name: string, color: string): Team => ({
   bench: [],
 });
 const emptyInningScores = (): InningScores => ({ away: [], home: [] });
+
+function parseMemberName(value: string): Pick<Member, "last" | "first"> | null {
+  const [last, ...firstParts] = value.trim().split(/\s+/);
+  if (!last) return null;
+  return { last, first: firstParts.join(" ") };
+}
 
 type PendingPlateAppearance = {
   eventType: "plate_appearance";
@@ -333,7 +346,7 @@ function App() {
       | "viewer-list"
       | "shared-game"
     >(initialSharedGameRoute ? "shared-game" : "entry"),
-    [newMember, setNewMember] = useState({ last: "", first: "" });
+    [newMemberName, setNewMemberName] = useState("");
   const [sharedGameRoute, setSharedGameRouteState] =
     useState<SharedGameRoute | null>(initialSharedGameRoute);
   const [localPlayerProfile, setLocalPlayerProfile] =
@@ -368,7 +381,10 @@ function App() {
     [viewerGames, setViewerGames] = useState<ViewerGame[]>([]),
     [viewerLoading, setViewerLoading] = useState(false),
     [viewerError, setViewerError] = useState("");
-  const [members, setMembers] = useState<Member[]>(initialMembers),
+  const [members, setMembers] = useState<Member[]>([]),
+    [loadedRosterRoomId, setLoadedRosterRoomId] = useState<string | null>(null),
+    [memberSuggestions, setMemberSuggestions] = useState<string[]>([]),
+    [memberError, setMemberError] = useState(""),
     [games, setGames] = useState<Game[]>([
       {
         id: "g1",
@@ -469,6 +485,101 @@ function App() {
     if (!value) setLineupDropTarget(null);
   };
   const currentInningLabel = `${inning}回${half}`;
+  const rosterRoomId =
+    view === "room-games"
+      ? selectedRoom?.id ?? null
+      : view === "viewer-list"
+        ? viewerSession?.roomId ?? null
+        : null;
+  const visibleRoomMembers =
+    rosterRoomId && loadedRosterRoomId === rosterRoomId ? members : [];
+
+  useEffect(() => {
+    if (!rosterRoomId) return;
+    let active = true;
+
+    void loadRoomMembers(rosterRoomId)
+      .then((loaded) => {
+        if (active) {
+          setMembers(loaded);
+          setLoadedRosterRoomId(rosterRoomId);
+          setMemberError("");
+          setNewMemberName("");
+        }
+      })
+      .catch((reason) => {
+        if (active) {
+          setMembers([]);
+          setLoadedRosterRoomId(rosterRoomId);
+          setMemberError(roomMemberErrorMessage(reason));
+        }
+      });
+
+    if (view === "room-games" && admin) {
+      void loadOtherRoomMemberNames(rosterRoomId)
+        .then((names) => {
+          if (active) setMemberSuggestions(names);
+        })
+        .catch(() => {
+          // 候補取得に失敗しても、現在のルームのメンバー操作は継続できる。
+        });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [admin, rosterRoomId, view]);
+
+  const addCurrentRoomMember = async () => {
+    if (!selectedRoom) return;
+    const name = parseMemberName(newMemberName);
+    if (!name) {
+      setMemberError("メンバー名を入力してください。");
+      return;
+    }
+    try {
+      const member = await addRoomMember(selectedRoom.id, name.last, name.first);
+      setMembers((current) => [...current, member]);
+      setNewMemberName("");
+      setMemberError("");
+    } catch (reason) {
+      setMemberError(roomMemberErrorMessage(reason));
+    }
+  };
+
+  const editCurrentRoomMember = async (id: string) => {
+    const member = visibleRoomMembers.find((item) => item.id === id);
+    if (!member) return;
+    const value = window.prompt(
+      "氏名を入力（姓と名の間は半角または全角スペース）",
+      `${member.last} ${member.first}`.trim(),
+    );
+    if (value === null) return;
+    const name = parseMemberName(value);
+    if (!name) {
+      setMemberError("メンバー名を入力してください。");
+      return;
+    }
+    try {
+      const updated = await updateRoomMember(id, name.last, name.first);
+      setMembers((current) =>
+        current.map((item) => (item.id === id ? updated : item)),
+      );
+      setMemberError("");
+    } catch (reason) {
+      setMemberError(roomMemberErrorMessage(reason));
+    }
+  };
+
+  const removeCurrentRoomMember = async (id: string) => {
+    try {
+      await removeRoomMember(id);
+      setMembers((current) => current.filter((item) => item.id !== id));
+      setMemberError("");
+    } catch (reason) {
+      setMemberError(roomMemberErrorMessage(reason));
+    }
+  };
 
   useEffect(
     () => () => {
@@ -584,7 +695,6 @@ function App() {
     const restore = async () => {
       const saved = await loadSnapshot<PersistedAppState>();
       if (!cancelled && saved?.version === 1) {
-        setMembers(saved.members);
         setGames(
           saved.games.map((savedGame) => ({
             ...savedGame,
@@ -639,7 +749,6 @@ function App() {
     const timer = window.setTimeout(() => {
       void saveSnapshot<PersistedAppState>({
         version: 1,
-        members,
         games,
         game,
         away,
@@ -2165,12 +2274,14 @@ function App() {
         <Home
           games={roomGames}
           admin={false}
-          members={members}
-          newMember={newMember}
+          members={visibleRoomMembers}
+          newMemberName=""
+          memberSuggestions={[]}
+          memberError={memberError}
           roomName={viewerSession.roomName}
           roomNumber={viewerSession.roomNumber}
           onBack={exitViewer}
-          onNewMember={() => undefined}
+          onNewMemberName={() => undefined}
           onAddMember={() => undefined}
           onEditMember={() => undefined}
           onRemoveMember={() => undefined}
@@ -2239,46 +2350,20 @@ function App() {
         games={roomGames}
         room={selectedRoom}
         admin={admin}
-        members={members}
-        newMember={newMember}
+        members={visibleRoomMembers}
+        newMemberName={newMemberName}
+        memberSuggestions={memberSuggestions}
+        memberError={memberError}
         roomName={selectedRoom.name}
         roomNumber={selectedRoom.roomNumber}
         onBack={() => setView("mypage")}
-        onNewMember={(value: { last: string; first: string }) =>
-          setNewMember(value)
-        }
-        onAddMember={() => {
-          if (newMember.last) {
-            setMembers((m) => [
-              ...m,
-              {
-                id: `m${Date.now()}`,
-                last: newMember.last,
-                first: newMember.first,
-              },
-            ]);
-            setNewMember({ last: "", first: "" });
-          }
+        onNewMemberName={(value: string) => {
+          setNewMemberName(value);
+          setMemberError("");
         }}
-        onEditMember={(id: string) => {
-          const member = members.find((item) => item.id === id);
-          if (!member) return;
-          const value = window.prompt(
-            "苗字 名前を入力",
-            `${member.last} ${member.first}`,
-          );
-          if (value) {
-            const [last, first = ""] = value.split(/\s+/);
-            setMembers((list) =>
-              list.map((item) =>
-                item.id === id ? { ...item, last, first } : item,
-              ),
-            );
-          }
-        }}
-        onRemoveMember={(id: string) =>
-          setMembers((list) => list.filter((item) => item.id !== id))
-        }
+        onAddMember={() => void addCurrentRoomMember()}
+        onEditMember={(id: string) => void editCurrentRoomMember(id)}
+        onRemoveMember={(id: string) => void removeCurrentRoomMember(id)}
         onOpen={openGame}
         onAdd={() => setCreating(true)}
         onRenameRoom={async (name: string) => {
@@ -2323,42 +2408,16 @@ function App() {
         games={games}
         admin={admin}
         members={members}
-        newMember={newMember}
-        onNewMember={(value: { last: string; first: string }) =>
-          setNewMember(value)
-        }
-        onAddMember={() => {
-          if (newMember.last) {
-            setMembers((m) => [
-              ...m,
-              {
-                id: `m${Date.now()}`,
-                last: newMember.last,
-                first: newMember.first,
-              },
-            ]);
-            setNewMember({ last: "", first: "" });
-          }
+        newMemberName={newMemberName}
+        memberSuggestions={memberSuggestions}
+        memberError={memberError}
+        onNewMemberName={(value: string) => {
+          setNewMemberName(value);
+          setMemberError("");
         }}
-        onEditMember={(id: string) => {
-          const member = members.find((item) => item.id === id);
-          if (!member) return;
-          const value = window.prompt(
-            "苗字 名前を入力",
-            `${member.last} ${member.first}`,
-          );
-          if (value) {
-            const [last, first = ""] = value.split(/\s+/);
-            setMembers((list) =>
-              list.map((item) =>
-                item.id === id ? { ...item, last, first } : item,
-              ),
-            );
-          }
-        }}
-        onRemoveMember={(id: string) =>
-          setMembers((list) => list.filter((item) => item.id !== id))
-        }
+        onAddMember={() => void addCurrentRoomMember()}
+        onEditMember={(id: string) => void editCurrentRoomMember(id)}
+        onRemoveMember={(id: string) => void removeCurrentRoomMember(id)}
         onOpen={openGame}
         onAdd={() => setCreating(true)}
         onAdmin={() => setPasswordOpen(true)}
@@ -3135,26 +3194,18 @@ function Home(props: any) {
             <div className="member-editor">
               <b>メンバーを追加</b>
               <input
-                placeholder="苗字"
-                value={props.newMember.last}
-                onChange={(e: any) =>
-                  props.onNewMember({
-                    ...props.newMember,
-                    last: e.target.value,
-                  })
-                }
+                list="room-member-suggestions"
+                placeholder="選手名（例: 田中 太郎）"
+                value={props.newMemberName}
+                onChange={(e: any) => props.onNewMemberName(e.target.value)}
               />
-              <input
-                placeholder="名前"
-                value={props.newMember.first}
-                onChange={(e: any) =>
-                  props.onNewMember({
-                    ...props.newMember,
-                    first: e.target.value,
-                  })
-                }
-              />
+              <datalist id="room-member-suggestions">
+                {props.memberSuggestions.map((name: string) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
               <button onClick={props.onAddMember}>追加</button>
+              {props.memberError && <small className="error">{props.memberError}</small>}
               <small>名前を押すと変更できます</small>
             </div>
           )}
