@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadSnapshot, saveSnapshot } from "./lib/persistence";
 import {
   createOwnedGame,
@@ -231,6 +231,26 @@ type DragState = {
   area: "players" | "bench";
   index: number;
 } | null;
+type InningPlayGroup = {
+  label: string;
+  plays: string[];
+};
+
+const inningLabelFromPlay = (value: string) => value.match(/^(\d+回[表裏])/)?.[1];
+
+const groupPlaysByInning = (plays: string[]): InningPlayGroup[] => {
+  const groups = new Map<string, string[]>();
+  plays.forEach((play) => {
+    const label = inningLabelFromPlay(play) ?? "その他";
+    const group = groups.get(label) ?? [];
+    group.push(play);
+    groups.set(label, group);
+  });
+  return Array.from(groups, ([label, groupedPlays]) => ({
+    label,
+    plays: groupedPlays,
+  }));
+};
 type LineupDropTarget = {
   team: TeamSide;
   area: "players" | "bench";
@@ -435,7 +455,10 @@ function App() {
       "2回裏 山田 三振",
     ]),
     [resultType, setResultType] = useState<string | null>(null),
-    [history, setHistory] = useState<Snapshot[]>([]);
+    [history, setHistory] = useState<Snapshot[]>([]),
+    [expandedInnings, setExpandedInnings] = useState<Record<string, boolean>>(
+      {},
+    );
   const [persistenceReady, setPersistenceReady] = useState(false);
   const dragRef = useRef<DragState>(null);
   const setDrag = (value: DragState) => {
@@ -443,6 +466,7 @@ function App() {
     setDragState(value);
     if (!value) setLineupDropTarget(null);
   };
+  const currentInningLabel = `${inning}回${half}`;
 
   useEffect(
     () => () => {
@@ -1130,10 +1154,18 @@ function App() {
     setHistory(rest);
     setResultType(null);
   };
-  const log = (text: string) => {
+  const log = (text: string, runs = 0) => {
     pendingInningStart.current = null;
     setResult(text);
-    setPlays((p) => [`${inning}回${half} ${currentBatter.last} ${text}`, ...p]);
+    const nextAwayScore = awayScore + (battingSide === "away" ? runs : 0);
+    const nextHomeScore = homeScore + (battingSide === "home" ? runs : 0);
+    const scoreSummary = runs
+      ? ` ${runs}点追加 ${away.name} ${nextAwayScore}-${nextHomeScore} ${home.name}`
+      : "";
+    setPlays((p) => [
+      `${inning}回${half} ${currentBatter.last} ${text}${scoreSummary}`,
+      ...p,
+    ]);
   };
   const resetCount = () => {
     setBalls(0);
@@ -1285,11 +1317,25 @@ function App() {
           : bases === 3
             ? "triple"
             : "home_run";
-    queuePlateAppearance(plateResult, text, runs, 0, responsiblePitcherKeys);
+    const resultText =
+      bases === 4
+        ? runs === 1
+          ? "ソロホームラン"
+          : runs === 4
+            ? "満塁ホームラン"
+            : `${runs}ランホームラン`
+        : text;
+    queuePlateAppearance(
+      plateResult,
+      resultText,
+      runs,
+      0,
+      responsiblePitcherKeys,
+    );
     score(runs);
     setRunners(nextRunners);
     setRunnerPitchers(nextRunnerPitchers);
-    log(text);
+    log(resultText, runs);
     resetCount();
     next();
     setResultType(null);
@@ -1325,7 +1371,7 @@ function App() {
     score(runs);
     setRunners(n);
     setRunnerPitchers(nextRunnerPitchers);
-    log(text);
+    log(text, runs);
     resetCount();
     next();
     setResultType(null);
@@ -1351,7 +1397,7 @@ function App() {
     if (scoresRunner) score(1);
     setRunners(nextRunners);
     setRunnerPitchers(nextRunnerPitchers);
-    log("犠牲フライ");
+    log("犠牲フライ", scoresRunner ? 1 : 0);
     resetCount();
     next();
     if (outs === 2) changeHalf();
@@ -2470,14 +2516,17 @@ function App() {
           <span>試合経過</span>
           <small>新しい順</small>
         </div>
-        {plays.map((p, i) => (
-          <Play
-            key={`${p}-${i}`}
-            value={p}
-            awayColor={away.color}
-            homeColor={home.color}
-          />
-        ))}
+        <InningHistory
+          plays={plays}
+          currentInningLabel={currentInningLabel}
+          expandedInnings={expandedInnings}
+          onToggle={(label) =>
+            setExpandedInnings((current) => ({
+              ...current,
+              [label]: !(current[label] ?? label === currentInningLabel),
+            }))
+          }
+        />
       </section>
       {canEditGame && (
         <section className="admin card">
@@ -3360,43 +3409,145 @@ function Score({
     </div>
   );
 }
+function InningHistory({
+  plays,
+  currentInningLabel,
+  expandedInnings,
+  onToggle,
+}: {
+  plays: string[];
+  currentInningLabel: string;
+  expandedInnings: Record<string, boolean>;
+  onToggle: (label: string) => void;
+}) {
+  const groups = groupPlaysByInning(plays);
+  const toggleRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const pendingTogglePosition = useRef<{ label: string; top: number } | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    const pending = pendingTogglePosition.current;
+    if (!pending) return;
+    const toggle = toggleRefs.current[pending.label];
+    if (toggle) {
+      // 見出しの上に経過を追加しても、押した見出し自体は画面内の同じ位置に残す。
+      // そのまま上へスクロールすれば、追加された経過を時系列で追える。
+      const offset = toggle.getBoundingClientRect().top - pending.top;
+      if (offset) window.scrollBy(0, offset);
+    }
+    pendingTogglePosition.current = null;
+  }, [expandedInnings]);
+  if (!groups.length) return <p className="empty">まだ試合経過はありません。</p>;
+  return (
+    <div className="inning-history-list">
+      {groups.map((group) => {
+        const isCurrent = group.label === currentInningLabel;
+        const isExpanded = expandedInnings[group.label] ?? isCurrent;
+        // 回だけを示す旧来の区切り行は、グループ見出しに置き換える。
+        const events = group.plays.filter((play) => play !== group.label);
+        return (
+          <section
+            className={`inning-history-group ${isCurrent ? "current-inning" : ""}`}
+            key={group.label}
+          >
+            {isExpanded && (
+              <div className="inning-history-events">
+                {events.length ? (
+                  events.map((play, index) => (
+                    <Play
+                      compact
+                      key={`${play}-${index}`}
+                      value={play}
+                    />
+                  ))
+                ) : (
+                  <p className="inning-history-empty">まだ記録はありません。</p>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              className="inning-history-toggle"
+              aria-expanded={isExpanded}
+              ref={(element) => {
+                toggleRefs.current[group.label] = element;
+              }}
+              onClick={(event) => {
+                pendingTogglePosition.current = {
+                  label: group.label,
+                  top: event.currentTarget.getBoundingClientRect().top,
+                };
+                onToggle(group.label);
+              }}
+            >
+              <span aria-hidden="true">{isExpanded ? "⌃" : "›"}</span>
+              {group.label}
+            </button>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function Play({
   value,
-  awayColor,
-  homeColor,
+  compact = false,
 }: {
   value: string;
-  awayColor: string;
-  homeColor: string;
+  compact?: boolean;
 }) {
   const parts = value.split(" "),
     inning = parts[0],
     name = parts[1] ?? "",
     result = parts.slice(2).join(" "),
     out = ["三振", "ゴロ", "飛", "直"].some((word) => result.includes(word)),
-    substitution = parseSubstitution(`${name} ${result}`.trim());
+    substitution = parseSubstitution(`${name} ${result}`.trim()),
+    defensiveChange = `${name} ${result}`.trim().match(/^(守備変更:)\s*(.+)$/),
+    scoringDetails = parseScoringDetails(result);
   if (substitution)
     return (
-      <div className="play substitution-play">
-        <span>{inning}</span>
+      <div className={`play substitution-play ${compact ? "compact-play" : ""}`}>
+        {!compact && <span>{inning}</span>}
         <div className="substitution-play-detail">
           <div>
             <b>
-              {substitution.kind}: {substitution.outgoing}（{substitution.outgoingPosition}）→
+              <em className="play-event-label">{substitution.kind}:</em>{" "}
+              {substitution.outgoing}（{substitution.outgoingPosition}）→
               {substitution.incoming}（{substitution.incomingPosition}）
             </b>
           </div>
         </div>
       </div>
     );
+  if (defensiveChange)
+    return (
+      <div className={`play ${compact ? "compact-play" : ""}`}>
+        {!compact && <span>{inning}</span>}
+        <b>
+          <em className="play-event-label">{defensiveChange[1]}</em>{" "}
+          {defensiveChange[2]}
+        </b>
+      </div>
+    );
   return (
     <div
-      className="play"
-      style={{ backgroundColor: inning.includes("表") ? awayColor : homeColor }}
+      className={`play ${compact ? "compact-play" : ""} ${scoringDetails ? "scoring-play" : ""}`}
     >
-      <span>{inning}</span>
+      {!compact && <span>{inning}</span>}
       <b>
-        {name} <em className={out ? "play-out" : "play-hit"}>{result}</em>
+        {name}{" "}
+        <em className={out ? "play-out" : "play-hit"}>
+          {scoringDetails?.play ?? result}
+        </em>
+        {scoringDetails && (
+          <>
+            {" "}
+            <small className="play-score-summary">
+              {scoringDetails.addedRuns}点追加{"\u3000"}{scoringDetails.score}
+            </small>
+          </>
+        )}
       </b>
     </div>
   );
@@ -3407,6 +3558,24 @@ type SubstitutionDetails = {
   outgoingPosition: string;
   incoming: string;
   incomingPosition: string;
+};
+type ScoringDetails = {
+  play: string;
+  addedRuns: string;
+  score: string;
+};
+
+const parseScoringDetails = (value: string): ScoringDetails | null => {
+  const match = value.match(
+    /^(.*?)\s+(\d+)点追加\s+(.+?)\s+(\d+)-(\d+)\s+(.+)$/,
+  );
+  return match
+    ? {
+        play: match[1],
+        addedRuns: match[2],
+        score: `${match[3]} ${match[4]}-${match[5]} ${match[6]}`,
+      }
+    : null;
 };
 const parseSubstitution = (value: string): SubstitutionDetails | null => {
   const match = value.match(
