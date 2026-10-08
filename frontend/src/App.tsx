@@ -3869,9 +3869,7 @@ function formatEarnedRunAverage(value: number | null | undefined) {
 
 function formatInnings(recordedOuts: number | undefined) {
   if (recordedOuts === undefined) return "---";
-  const whole = Math.floor(recordedOuts / 3);
-  const remainder = recordedOuts % 3;
-  return `${whole}${remainder ? `回 ${remainder}/3` : "回"}`;
+  return `${(recordedOuts / 3).toFixed(1)}回`;
 }
 
 function PlayerCard({
@@ -3901,21 +3899,31 @@ function PlayerCard({
           {player.last} {player.first}
         </h2>
         {reverse ? (
-          <>
+          <div className="player-card-stats">
             <p>
-              防御率 <b>{formatEarnedRunAverage(statistics?.earned_run_average)}</b>
+              <span>防御率</span>
+              <b>{formatEarnedRunAverage(statistics?.earned_run_average)}</b>
             </p>
-            <p>投球回 {formatInnings(statistics?.outs_recorded)}</p>
-          </>
+            <p>
+              <span>投球回</span>
+              <b>{formatInnings(statistics?.outs_recorded)}</b>
+            </p>
+          </div>
         ) : (
-          <>
+          <div className="player-card-stats">
             <p>
-              打率 <b>{formatBattingAverage(statistics?.batting_average)}</b>
+              <span>打率</span>
+              <b>{formatBattingAverage(statistics?.batting_average)}</b>
             </p>
             <p>
-              {statistics ? `${statistics.home_runs}本塁打 ${statistics.runs_batted_in}打点` : "---"}
+              <span>本塁打</span>
+              <b>{statistics?.home_runs ?? "---"}</b>
             </p>
-          </>
+            <p>
+              <span>打点</span>
+              <b>{statistics?.runs_batted_in ?? "---"}</b>
+            </p>
+          </div>
         )}
       </div>
     </button>
