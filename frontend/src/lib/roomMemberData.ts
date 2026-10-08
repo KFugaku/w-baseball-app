@@ -31,12 +31,21 @@ function toMember(row: RoomMemberRow): RoomMember {
 }
 
 export function roomMemberErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : ''
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : ''
+  const code =
+    error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : ''
   if (/room_members|schema cache|relation .* does not exist/i.test(message)) {
     return 'ルームメンバー用SQLが未反映です。202610090002_room_members.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
   }
-  if (/duplicate key|unique/i.test(message)) {
-    return '同じ名前のメンバーがすでに登録されています。'
+  if (code === '23505' || /duplicate key|unique/i.test(message)) {
+    return 'このメンバーは既に追加されています。'
   }
   return 'メンバーを更新できませんでした。ログイン状態とSupabaseの設定を確認してください。'
 }

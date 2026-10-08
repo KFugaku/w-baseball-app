@@ -498,32 +498,37 @@ function App() {
     if (!rosterRoomId) return;
     let active = true;
 
-    void loadRoomMembers(rosterRoomId)
-      .then((loaded) => {
-        if (active) {
-          setMembers(loaded);
-          setLoadedRosterRoomId(rosterRoomId);
-          setMemberError("");
-          setNewMemberName("");
+    void (async () => {
+      try {
+        const loaded = await loadRoomMembers(rosterRoomId);
+        if (!active) return;
+        setMembers(loaded);
+        setLoadedRosterRoomId(rosterRoomId);
+        setMemberError("");
+        setNewMemberName("");
+
+        if (view === "room-games" && admin) {
+          try {
+            const names = await loadOtherRoomMemberNames(rosterRoomId);
+            if (!active) return;
+            const currentMemberNames = new Set(
+              loaded.map((member) => `${member.last} ${member.first}`.trim()),
+            );
+            setMemberSuggestions(
+              names.filter((name) => !currentMemberNames.has(name)),
+            );
+          } catch {
+            // 候補取得に失敗しても、現在のルームのメンバー操作は継続できる。
+          }
         }
-      })
-      .catch((reason) => {
+      } catch (reason) {
         if (active) {
           setMembers([]);
           setLoadedRosterRoomId(rosterRoomId);
           setMemberError(roomMemberErrorMessage(reason));
         }
-      });
-
-    if (view === "room-games" && admin) {
-      void loadOtherRoomMemberNames(rosterRoomId)
-        .then((names) => {
-          if (active) setMemberSuggestions(names);
-        })
-        .catch(() => {
-          // 候補取得に失敗しても、現在のルームのメンバー操作は継続できる。
-        });
-    }
+      }
+    })();
 
     return () => {
       active = false;
@@ -540,6 +545,9 @@ function App() {
     try {
       const member = await addRoomMember(selectedRoom.id, name.last, name.first);
       setMembers((current) => [...current, member]);
+      setMemberSuggestions((current) =>
+        current.filter((suggestion) => suggestion !== `${name.last} ${name.first}`.trim()),
+      );
       setNewMemberName("");
       setMemberError("");
     } catch (reason) {
@@ -564,6 +572,9 @@ function App() {
       const updated = await updateRoomMember(id, name.last, name.first);
       setMembers((current) =>
         current.map((item) => (item.id === id ? updated : item)),
+      );
+      setMemberSuggestions((current) =>
+        current.filter((suggestion) => suggestion !== `${name.last} ${name.first}`.trim()),
       );
       setMemberError("");
     } catch (reason) {
