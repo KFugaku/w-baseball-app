@@ -134,6 +134,17 @@ export type PlayerStatistics = {
   }[];
 };
 
+/** 試合中の打順・NOW BATTINGで使う、軽量な成績サマリー。 */
+export type PlayerStatisticSummary = Pick<
+  PlayerStatistics["batting"],
+  "games" | "at_bats" | "hits" | "home_runs" | "runs_batted_in" | "batting_average"
+> & {
+  appearances: number;
+  outs_recorded: number;
+  earned_runs: number;
+  earned_run_average: number | null;
+};
+
 export type GameEventUpdateResult = {
   revision: number;
   updatedAt: string;
@@ -392,6 +403,48 @@ export async function loadPlayerStatistics(
   });
   if (error) throw error;
   return data as PlayerStatistics;
+}
+
+/**
+ * 表示中の打順を一度に取得する。氏名ではなく、試合イベントに保存された player key で対応付ける。
+ */
+export async function loadRoomPlayerStatisticSummaries(
+  roomId: string,
+  playerKeys: string[],
+): Promise<Record<string, PlayerStatisticSummary>> {
+  const uniqueKeys = Array.from(new Set(playerKeys.filter(Boolean)));
+  if (!uniqueKeys.length) return {};
+
+  const { data, error } = await requireClient().rpc(
+    "get_room_player_stat_summaries",
+    {
+      target_room_id: roomId,
+      target_player_keys: uniqueKeys,
+    },
+  );
+  if (error) throw error;
+
+  return Object.fromEntries(
+    ((data ?? []) as {
+      player_key: string;
+      batting: Pick<
+        PlayerStatistics["batting"],
+        | "games"
+        | "at_bats"
+        | "hits"
+        | "home_runs"
+        | "runs_batted_in"
+        | "batting_average"
+      >;
+      pitching: Pick<
+        PlayerStatistics["pitching"],
+        "appearances" | "outs_recorded" | "earned_runs" | "earned_run_average"
+      >;
+    }[]).map(({ player_key, batting, pitching }) => [
+      player_key,
+      { ...batting, ...pitching },
+    ]),
+  );
 }
 
 /** Realtimeで試合に関係する行が更新されたら、表示を再取得する。 */
