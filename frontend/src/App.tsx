@@ -9,8 +9,11 @@ import {
 } from "./lib/gameCreationData";
 import {
   createOwnedRoom,
+  deleteOwnedRoom,
   loadOwnedRooms,
   roomCreationErrorMessage,
+  roomManagementErrorMessage,
+  renameOwnedRoom,
   type OwnedRoom,
 } from "./lib/myPageData";
 import {
@@ -2237,6 +2240,28 @@ function App() {
         }
         onOpen={openGame}
         onAdd={() => setCreating(true)}
+        onRenameRoom={async (name: string) => {
+          if (!selectedRoom) return;
+          const roomId = selectedRoom.id;
+          const renamed = await renameOwnedRoom(roomId, name);
+          setSelectedRoom((current) =>
+            current?.id === roomId ? { ...current, name: renamed } : current,
+          );
+        }}
+        onDeleteRoom={async () => {
+          const roomId = selectedRoom.id;
+          // 同一タブに閲覧セッションが残っている場合も、先に無効化しておく。
+          try {
+            await endRoomViewSession();
+          } catch {
+            // 削除RPCが最終的な整合性を担保するため、閲覧終了の通信失敗では中断しない。
+          }
+          await deleteOwnedRoom(roomId);
+          setSelectedRoom(null);
+          setViewerSession(null);
+          setViewerGames([]);
+          setView("mypage");
+        }}
         onLogout={() => setLogoutOpen(true)}
         creating={creating}
         setup={setup}
@@ -3051,6 +3076,9 @@ function MyPage({
   );
 }
 function Home(props: any) {
+  const [roomNameEditorOpen, setRoomNameEditorOpen] = useState(false);
+  const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
+  const canManageRoom = Boolean(props.admin && props.room);
   return (
     <main className="home-layout">
       <aside className="sidebar">
@@ -3117,7 +3145,22 @@ function Home(props: any) {
             <span className="section-eyebrow">
               {props.roomName ? "ROOM GAMES" : "TODAY'S GAMES"}
             </span>
-            <h1>{props.roomName ? `${props.roomName} の試合` : "試合一覧"}</h1>
+            <div className="room-title-row">
+              <h1>
+                {props.roomName ? `${props.roomName} の試合` : "試合一覧"}
+                {canManageRoom && (
+                  <button
+                    type="button"
+                    className="room-name-edit"
+                    aria-label="ルーム名を編集"
+                    title="ルーム名を編集"
+                    onClick={() => setRoomNameEditorOpen(true)}
+                  >
+                    ✎
+                  </button>
+                )}
+              </h1>
+            </div>
             {props.roomNumber && (
               <small className="room-number">
                 ルーム番号 {props.roomNumber}
@@ -3125,9 +3168,20 @@ function Home(props: any) {
             )}
           </div>
           {props.admin ? (
-            <button className="admin-badge" onClick={props.onLogout}>
-              管理者モード
-            </button>
+            <div className="room-admin-actions">
+              <button className="admin-badge" onClick={props.onLogout}>
+                管理者モード
+              </button>
+              {canManageRoom && (
+                <button
+                  type="button"
+                  className="room-delete"
+                  onClick={() => setRoomDeleteOpen(true)}
+                >
+                  ルームを削除
+                </button>
+              )}
+            </div>
           ) : (
             <button className="admin-open" onClick={props.onAdmin}>
               管理者
@@ -3184,6 +3238,20 @@ function Home(props: any) {
         confirm={props.onLogoutConfirm}
         close={props.onCloseLogout}
       />
+      {canManageRoom && roomNameEditorOpen && (
+        <RoomNameEditModal
+          roomName={props.room.name}
+          close={() => setRoomNameEditorOpen(false)}
+          onSave={props.onRenameRoom}
+        />
+      )}
+      {canManageRoom && roomDeleteOpen && (
+        <RoomDeleteModal
+          roomName={props.room.name}
+          close={() => setRoomDeleteOpen(false)}
+          onDelete={props.onDeleteRoom}
+        />
+      )}
     </main>
   );
 }
@@ -4541,6 +4609,108 @@ function Confirm({ open, text, confirm, close }: any) {
         <p>{text}</p>
         <button onClick={confirm}>はい</button>
         <button className="cancel" onClick={close}>
+          キャンセル
+        </button>
+      </div>
+    </div>
+  );
+}
+function RoomNameEditModal({
+  roomName,
+  close,
+  onSave,
+}: {
+  roomName: string;
+  close: () => void;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(roomName);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const normalized = name.trim();
+    if (!normalized) {
+      setError("ルーム名を入力してください。");
+      return;
+    }
+    if (normalized.length > 80) {
+      setError("ルーム名は80文字以内で入力してください。");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      await onSave(normalized);
+      close();
+    } catch (reason) {
+      setError(roomManagementErrorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <form className="password-modal" onSubmit={(event) => void submit(event)}>
+        <span className="section-eyebrow">EDIT ROOM</span>
+        <h2>ルーム名を編集</h2>
+        <p>ルーム番号とルームパスワードは変更されません。</p>
+        <input
+          autoFocus
+          value={name}
+          maxLength={80}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="ルーム名"
+        />
+        {error && <small className="error">{error}</small>}
+        <button disabled={busy}>{busy ? "保存中…" : "保存"}</button>
+        <button type="button" className="cancel" disabled={busy} onClick={close}>
+          キャンセル
+        </button>
+      </form>
+    </div>
+  );
+}
+function RoomDeleteModal({
+  roomName,
+  close,
+  onDelete,
+}: {
+  roomName: string;
+  close: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const remove = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await onDelete();
+      close();
+    } catch (reason) {
+      setError(roomManagementErrorMessage(reason));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="password-modal room-delete-modal" role="dialog" aria-modal="true">
+        <span className="section-eyebrow">DELETE ROOM</span>
+        <h2>「{roomName}」を削除しますか？</h2>
+        <p>
+          このルームの試合、チーム、選手、試合経過、成績、閲覧セッションも削除されます。削除後は元に戻せません。
+        </p>
+        {error && <small className="error">{error}</small>}
+        <button className="danger-action" disabled={busy} onClick={() => void remove()}>
+          {busy ? "削除中…" : "削除する"}
+        </button>
+        <button className="cancel" disabled={busy} onClick={close}>
           キャンセル
         </button>
       </div>

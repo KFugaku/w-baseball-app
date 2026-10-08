@@ -23,6 +23,18 @@ export function roomCreationErrorMessage(error: unknown): string {
   return 'ルームを作成できませんでした。ログイン状態とSupabaseの設定を確認してください。'
 }
 
+export function roomManagementErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (/ログインが必要|ルーム名は|権限がありません/.test(error.message)) {
+      return error.message
+    }
+    if (/rename_owned_room|delete_owned_room|schema cache|could not find the function/i.test(error.message)) {
+      return 'ルーム管理用SQLが未反映です。202610090001_room_management.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
+    }
+  }
+  return 'ルームを更新できませんでした。ログイン状態とSupabaseの設定を確認してください。'
+}
+
 export async function createOwnedRoom(name: string, password: string): Promise<OwnedRoom> {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase接続が未設定です。')
 
@@ -44,6 +56,34 @@ export async function createOwnedRoom(name: string, password: string): Promise<O
     teams: [],
     games: [],
   }
+}
+
+/** 所有者確認はサーバー側RPCでも行う。ルーム番号・パスワードは変更しない。 */
+export async function renameOwnedRoom(roomId: string, name: string): Promise<string> {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase接続が未設定です。')
+
+  const { data, error } = await supabase.rpc('rename_owned_room', {
+    target_room_id: roomId,
+    target_name: name.trim(),
+  })
+  if (error) throw error
+
+  const renamed = Array.isArray(data) ? data[0] : data
+  if (!renamed?.name) throw new Error('ルーム名の更新結果を確認できませんでした。')
+  return renamed.name
+}
+
+/**
+ * 関連する試合・チーム・選手・イベントを含めて、所有者のルームだけを削除する。
+ * 閲覧セッションとパスワードハッシュは外部キーの CASCADE で同時に無効化される。
+ */
+export async function deleteOwnedRoom(roomId: string): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase接続が未設定です。')
+
+  const { error } = await supabase.rpc('delete_owned_room', {
+    target_room_id: roomId,
+  })
+  if (error) throw error
 }
 
 /** RLSを通過する、現在ログインしている利用者自身のルームだけを取得する。 */
