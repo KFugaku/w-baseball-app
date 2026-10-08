@@ -26,6 +26,7 @@ import {
 } from "./lib/roomMemberData";
 import {
   getGameAccess,
+  loadRoomPlayerStatisticSummaries,
   loadPlayerStatistics,
   loadViewerGameDetail,
   loadViewerGames,
@@ -35,6 +36,7 @@ import {
   type GameAccess,
   type GameEventUpdate,
   type PlateResult,
+  type PlayerStatisticSummary,
   type PlayerStatistics,
   type ViewerGame,
 } from "./lib/roomViewData";
@@ -362,6 +364,11 @@ function App() {
   const [gameRevision, setGameRevision] = useState(0);
   const [gameSyncError, setGameSyncError] = useState("");
   const [gameSyncTick, setGameSyncTick] = useState(0);
+  const [gamePlayerStatistics, setGamePlayerStatistics] = useState<
+    Record<string, PlayerStatisticSummary>
+  >({});
+  const [loadedGameStatisticsScope, setLoadedGameStatisticsScope] = useState("");
+  const [gameStatisticsError, setGameStatisticsError] = useState("");
   const lastGameSyncSignature = useRef<string | null>(null);
   const gameSyncInFlight = useRef(false);
   const skipNextGameSync = useRef(false);
@@ -1149,6 +1156,57 @@ function App() {
       fieldingTeam.players.find((p) => p.pos === "投") ??
       fieldingTeam.players[0] ??
       fallbackPlayer;
+  const gameStatisticsRoomId =
+    sharedGameRoute?.roomId ?? selectedRoom?.id ?? null;
+  const gamePlayerKeys = Array.from(
+    new Set(
+      [...away.players, ...away.bench, ...home.players, ...home.bench]
+        .map((player) => player.id)
+        .filter((playerId) => playerId && playerId !== "empty"),
+    ),
+  ).sort();
+  const gamePlayerKeySignature = gamePlayerKeys.join(",");
+  const gameStatisticsScope = gameStatisticsRoomId
+    ? `${gameStatisticsRoomId}:${gamePlayerKeySignature}`
+    : "";
+  const visibleGamePlayerStatistics =
+    loadedGameStatisticsScope === gameStatisticsScope
+      ? gamePlayerStatistics
+      : {};
+
+  useEffect(() => {
+    const playerKeys = gamePlayerKeySignature
+      ? gamePlayerKeySignature.split(",")
+      : [];
+    if (!gameStatisticsRoomId || !playerKeys.length) return;
+    let cancelled = false;
+    void loadRoomPlayerStatisticSummaries(gameStatisticsRoomId, playerKeys)
+      .then((statistics) => {
+        if (cancelled) return;
+        setGamePlayerStatistics(statistics);
+        setLoadedGameStatisticsScope(gameStatisticsScope);
+        setGameStatisticsError("");
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setLoadedGameStatisticsScope(gameStatisticsScope);
+        setGamePlayerStatistics({});
+        setGameStatisticsError(
+          reason instanceof Error
+            ? "個人成績を読み込めませんでした。"
+            : "個人成績を読み込めませんでした。",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    gamePlayerKeySignature,
+    gameStatisticsRoomId,
+    gameStatisticsScope,
+    gameSyncTick,
+    sharedAccessRevision,
+  ]);
   const snapshot = (completedPlateAppearance = false) => {
     if (!isLiveGame) return;
     if (sharedGameRoute && sharedGameAccess === "owner") setUndoReady(false);
@@ -2529,6 +2587,7 @@ function App() {
           <PlayerCard
             player={currentBatter}
             label={`${batters[battingSide] + 1}番`}
+            statistics={visibleGamePlayerStatistics[currentBatter.id]}
             onOpen={() =>
               openPlayerProfile({
                 player: currentBatter,
@@ -2545,11 +2604,15 @@ function App() {
             player={pitcher}
             label="投手"
             reverse
+            statistics={visibleGamePlayerStatistics[pitcher.id]}
             onOpen={() =>
               openPlayerProfile({ player: pitcher, teamName: fieldingTeam.name })
             }
           />
         </div>
+        {gameStatisticsError && (
+          <p className="stats-load-error">{gameStatisticsError}</p>
+        )}
         <div className="count-row">
           <Count label="B" active={balls} max={3} tone="ball" />
           <Count label="S" active={strikes} max={2} tone="strike" />
@@ -2588,6 +2651,7 @@ function App() {
         battingSide={battingSide}
         runners={runners}
         isLiveGame={isLiveGame}
+        statistics={visibleGamePlayerStatistics}
         drag={drag}
         setDrag={setDrag}
         lineupDropTarget={lineupDropTarget}
@@ -3793,15 +3857,34 @@ function ResultBanner({ result }: { result: string }) {
     </div>
   );
 }
+function formatBattingAverage(value: number | null | undefined) {
+  if (value === null || value === undefined) return "---";
+  const formatted = value.toFixed(3);
+  return value < 1 ? formatted.replace(/^0/, "") : formatted;
+}
+
+function formatEarnedRunAverage(value: number | null | undefined) {
+  return value === null || value === undefined ? "---" : value.toFixed(2);
+}
+
+function formatInnings(recordedOuts: number | undefined) {
+  if (recordedOuts === undefined) return "---";
+  const whole = Math.floor(recordedOuts / 3);
+  const remainder = recordedOuts % 3;
+  return `${whole}${remainder ? `回 ${remainder}/3` : "回"}`;
+}
+
 function PlayerCard({
   player,
   label,
   reverse = false,
+  statistics,
   onOpen,
 }: {
   player: Player;
   label: string;
   reverse?: boolean;
+  statistics?: PlayerStatisticSummary;
   onOpen: () => void;
 }) {
   return (
@@ -3817,10 +3900,23 @@ function PlayerCard({
         <h2>
           {player.last} {player.first}
         </h2>
-        <p>
-          打率 <b>{player.avg}</b>
-        </p>
-        <p>5打数 2安打</p>
+        {reverse ? (
+          <>
+            <p>
+              防御率 <b>{formatEarnedRunAverage(statistics?.earned_run_average)}</b>
+            </p>
+            <p>投球回 {formatInnings(statistics?.outs_recorded)}</p>
+          </>
+        ) : (
+          <>
+            <p>
+              打率 <b>{formatBattingAverage(statistics?.batting_average)}</b>
+            </p>
+            <p>
+              {statistics ? `${statistics.home_runs}本塁打 ${statistics.runs_batted_in}打点` : "---"}
+            </p>
+          </>
+        )}
       </div>
     </button>
   );
@@ -4197,6 +4293,7 @@ function Lineups({
   battingSide,
   runners,
   isLiveGame,
+  statistics,
   drag,
   setDrag,
   lineupDropTarget,
@@ -4242,6 +4339,7 @@ function Lineups({
             canSubstituteWithBench: isLiveGame && admin,
             battingSide,
             runnerNames: Object.values(runners),
+            statistics,
             nextBatterIndex:
               isLiveGame && battingSide !== "away" && away.players.length
                 ? batters.away % away.players.length
@@ -4275,6 +4373,7 @@ function Lineups({
             canSubstituteWithBench: isLiveGame && admin,
             battingSide,
             runnerNames: Object.values(runners),
+            statistics,
             nextBatterIndex:
               isLiveGame && battingSide !== "home" && home.players.length
                 ? batters.home % home.players.length
@@ -4309,6 +4408,7 @@ function Lineup({
   canSubstituteWithBench,
   battingSide,
   runnerNames,
+  statistics,
   drag,
   setDrag,
   lineupDropTarget,
@@ -4556,7 +4656,7 @@ function Lineup({
             </button>
           )}
         </div>
-        <em>{p.avg}</em>
+        <em>{formatBattingAverage(statistics[p.id]?.batting_average)}</em>
       </div>
     );
   };
