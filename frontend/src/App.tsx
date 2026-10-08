@@ -330,7 +330,6 @@ function Avatar({ name, small = false }: { name: string; small?: boolean }) {
       aria-label={`${name}のプロフィール画像`}
     >
       <span className="avatar-player-icon" aria-hidden="true">
-        <span className="avatar-cap" />
         <span className="avatar-head" />
         <span className="avatar-body" />
       </span>
