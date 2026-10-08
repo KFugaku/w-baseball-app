@@ -3190,7 +3190,11 @@ function MyPage({
 function Home(props: any) {
   const [roomNameEditorOpen, setRoomNameEditorOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
+  const [memberSuggestionOpen, setMemberSuggestionOpen] = useState(false);
   const canManageRoom = Boolean(props.admin && props.room);
+  const filteredMemberSuggestions = props.memberSuggestions.filter((name: string) =>
+    name.toLocaleLowerCase().includes(props.newMemberName.trim().toLocaleLowerCase()),
+  );
   return (
     <main className="home-layout">
       <aside className="sidebar">
@@ -3210,17 +3214,41 @@ function Home(props: any) {
               }}
             >
               <b>メンバーを追加</b>
-              <input
-                list="room-member-suggestions"
-                placeholder="選手名（例: 田中 太郎）"
-                value={props.newMemberName}
-                onChange={(e: any) => props.onNewMemberName(e.target.value)}
-              />
-              <datalist id="room-member-suggestions">
-                {props.memberSuggestions.map((name: string) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
+              <div className="member-suggestion-combobox">
+                <input
+                  autoComplete="off"
+                  aria-autocomplete="list"
+                  aria-expanded={memberSuggestionOpen}
+                  placeholder="選手名（例: 田中 太郎）"
+                  value={props.newMemberName}
+                  onFocus={() => setMemberSuggestionOpen(true)}
+                  onBlur={() =>
+                    window.setTimeout(() => setMemberSuggestionOpen(false), 120)
+                  }
+                  onChange={(e: any) => {
+                    props.onNewMemberName(e.target.value);
+                    setMemberSuggestionOpen(true);
+                  }}
+                />
+                {memberSuggestionOpen && filteredMemberSuggestions.length > 0 && (
+                  <div className="member-suggestion-list" role="listbox">
+                    {filteredMemberSuggestions.map((name: string) => (
+                      <button
+                        key={name}
+                        type="button"
+                        role="option"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          props.onNewMemberName(name);
+                          setMemberSuggestionOpen(false);
+                        }}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button type="submit">追加</button>
               {props.memberError && <small className="error">{props.memberError}</small>}
               <small>名前を押すと変更できます</small>
