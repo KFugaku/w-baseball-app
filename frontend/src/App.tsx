@@ -333,7 +333,6 @@ function App() {
       | "viewer-list"
       | "shared-game"
     >(initialSharedGameRoute ? "shared-game" : "entry"),
-    [rosterOpen, setRosterOpen] = useState(true),
     [newMember, setNewMember] = useState({ last: "", first: "" });
   const [sharedGameRoute, setSharedGameRouteState] =
     useState<SharedGameRoute | null>(initialSharedGameRoute);
@@ -2167,12 +2166,10 @@ function App() {
           games={roomGames}
           admin={false}
           members={members}
-          rosterOpen={rosterOpen}
           newMember={newMember}
           roomName={viewerSession.roomName}
           roomNumber={viewerSession.roomNumber}
           onBack={exitViewer}
-          onRoster={() => setRosterOpen((v) => !v)}
           onNewMember={() => undefined}
           onAddMember={() => undefined}
           onEditMember={() => undefined}
@@ -2243,12 +2240,10 @@ function App() {
         room={selectedRoom}
         admin={admin}
         members={members}
-        rosterOpen={rosterOpen}
         newMember={newMember}
         roomName={selectedRoom.name}
         roomNumber={selectedRoom.roomNumber}
         onBack={() => setView("mypage")}
-        onRoster={() => setRosterOpen((v) => !v)}
         onNewMember={(value: { last: string; first: string }) =>
           setNewMember(value)
         }
@@ -2328,9 +2323,7 @@ function App() {
         games={games}
         admin={admin}
         members={members}
-        rosterOpen={rosterOpen}
         newMember={newMember}
-        onRoster={() => setRosterOpen((v) => !v)}
         onNewMember={(value: { last: string; first: string }) =>
           setNewMember(value)
         }
@@ -3134,41 +3127,50 @@ function Home(props: any) {
         <div className="brand">
           <span className="brand-ball">●</span>草野球速報
         </div>
-        <button className="member-button" onClick={props.onRoster}>
-          今日のメンバー
-        </button>
-        {props.rosterOpen && (
-          <div className="member-panel">
-            <b>メンバーを追加</b>
-            <input
-              disabled={!props.admin}
-              placeholder="苗字"
-              value={props.newMember.last}
-              onChange={(e: any) =>
-                props.onNewMember({ ...props.newMember, last: e.target.value })
-              }
-            />
-            <input
-              disabled={!props.admin}
-              placeholder="名前"
-              value={props.newMember.first}
-              onChange={(e: any) =>
-                props.onNewMember({ ...props.newMember, first: e.target.value })
-              }
-            />
-            <button disabled={!props.admin} onClick={props.onAddMember}>
-              追加
-            </button>
-            <small>名前を押すと変更できます</small>
-            <div className="member-list">
-              {props.members.map((m: Member) => (
+        <section className="member-panel" aria-labelledby="room-members-heading">
+          <h2 id="room-members-heading" className="member-heading">
+            ルームメンバー
+          </h2>
+          {props.admin && (
+            <div className="member-editor">
+              <b>メンバーを追加</b>
+              <input
+                placeholder="苗字"
+                value={props.newMember.last}
+                onChange={(e: any) =>
+                  props.onNewMember({
+                    ...props.newMember,
+                    last: e.target.value,
+                  })
+                }
+              />
+              <input
+                placeholder="名前"
+                value={props.newMember.first}
+                onChange={(e: any) =>
+                  props.onNewMember({
+                    ...props.newMember,
+                    first: e.target.value,
+                  })
+                }
+              />
+              <button onClick={props.onAddMember}>追加</button>
+              <small>名前を押すと変更できます</small>
+            </div>
+          )}
+          <div className="member-list">
+            {props.members.length ? (
+              props.members.map((m: Member) => (
                 <div className="member-entry" key={m.id}>
-                  <button
-                    disabled={!props.admin}
-                    onClick={() => props.onEditMember(m.id)}
-                  >
-                    {m.last} {m.first}
-                  </button>
+                  {props.admin ? (
+                    <button onClick={() => props.onEditMember(m.id)}>
+                      {m.last} {m.first}
+                    </button>
+                  ) : (
+                    <span className="member-name">
+                      {m.last} {m.first}
+                    </span>
+                  )}
                   {props.admin && (
                     <button
                       className="member-remove"
@@ -3178,10 +3180,12 @@ function Home(props: any) {
                     </button>
                   )}
                 </div>
-              ))}
-            </div>
+              ))
+            ) : (
+              <p className="member-empty">メンバーはまだ登録されていません。</p>
+            )}
           </div>
-        )}
+        </section>
       </aside>
       <section className="home-main">
         <header className="home-header">
