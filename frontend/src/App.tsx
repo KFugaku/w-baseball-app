@@ -324,7 +324,17 @@ const readProgressSnapshot = (
 
 function Avatar({ name, small = false }: { name: string; small?: boolean }) {
   return (
-    <span className={`avatar ${small ? "small" : ""}`}>{name.slice(0, 1)}</span>
+    <span
+      className={`avatar ${small ? "small" : ""}`}
+      role="img"
+      aria-label={`${name}のプロフィール画像`}
+    >
+      <span className="avatar-player-icon" aria-hidden="true">
+        <span className="avatar-cap" />
+        <span className="avatar-head" />
+        <span className="avatar-body" />
+      </span>
+    </span>
   );
 }
 function App() {
