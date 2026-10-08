@@ -41,11 +41,11 @@ export function roomMemberErrorMessage(error: unknown): string {
     error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code
       : ''
-  if (/room_members|schema cache|relation .* does not exist/i.test(message)) {
-    return 'ルームメンバー用SQLが未反映です。202610090002_room_members.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
-  }
   if (code === '23505' || /duplicate key|unique/i.test(message)) {
     return 'このメンバーは既に追加されています。'
+  }
+  if (/schema cache|relation .* does not exist/i.test(message)) {
+    return 'ルームメンバー用SQLが未反映です。202610090002_room_members.sql をSupabase SQL Editorで実行し、画面を再読み込みしてください。'
   }
   return 'メンバーを更新できませんでした。ログイン状態とSupabaseの設定を確認してください。'
 }
