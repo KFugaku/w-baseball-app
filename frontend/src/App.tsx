@@ -3202,7 +3202,13 @@ function Home(props: any) {
             ルームメンバー
           </h2>
           {props.admin && (
-            <div className="member-editor">
+            <form
+              className="member-editor"
+              onSubmit={(event) => {
+                event.preventDefault();
+                props.onAddMember();
+              }}
+            >
               <b>メンバーを追加</b>
               <input
                 list="room-member-suggestions"
@@ -3215,10 +3221,10 @@ function Home(props: any) {
                   <option key={name} value={name} />
                 ))}
               </datalist>
-              <button onClick={props.onAddMember}>追加</button>
+              <button type="submit">追加</button>
               {props.memberError && <small className="error">{props.memberError}</small>}
               <small>名前を押すと変更できます</small>
-            </div>
+            </form>
           )}
           <div className="member-list">
             {props.members.length ? (
