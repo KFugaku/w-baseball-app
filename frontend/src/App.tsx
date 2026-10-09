@@ -2608,6 +2608,7 @@ function App() {
           <PlayerCard
             player={currentBatter}
             label={`${batters[battingSide] + 1}番`}
+            teamColor={battingTeam.color}
             statistics={visibleGamePlayerStatistics[currentBatter.id]}
             onOpen={() =>
               openPlayerProfile({
@@ -2625,6 +2626,7 @@ function App() {
             player={pitcher}
             label="投手"
             reverse
+            teamColor={fieldingTeam.color}
             statistics={visibleGamePlayerStatistics[pitcher.id]}
             onOpen={() =>
               openPlayerProfile({ player: pitcher, teamName: fieldingTeam.name })
@@ -3913,12 +3915,14 @@ function formatPositionName(position: string) {
 function PlayerCard({
   player,
   label,
+  teamColor,
   reverse = false,
   statistics,
   onOpen,
 }: {
   player: Player;
   label: string;
+  teamColor: string;
   reverse?: boolean;
   statistics?: PlayerStatisticSummary;
   onOpen: () => void;
@@ -3926,6 +3930,7 @@ function PlayerCard({
   return (
     <button
       className={`player player-profile-link ${reverse ? "pitcher" : ""}`}
+      style={{ "--player-team-color": teamColor } as React.CSSProperties}
       onClick={onOpen}
     >
       <Avatar name={player.last} silhouette />
