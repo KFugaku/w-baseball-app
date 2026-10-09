@@ -1,2 +1,23 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap');
-*{box-sizing:border-box} body{margin:0;min-width:320px;background:#f2f5f2;color:#17231e;font-family:'Noto Sans JP',sans-serif} button{font:inherit}
+:root {
+  color-scheme: dark;
+  --bg:#030711; --surface:#07111f; --surface-2:#0b1b30; --raise:rgb(83 196 255 / 7%);
+  --text:#ecf6ff; --text-2:#a8bdd0; --text-3:#66839d; --line:rgb(116 210 255 / 19%); --line-faint:rgb(116 210 255 / 9%); --line-strong:rgb(142 221 255 / 38%);
+  --accent:#58d4ff; --accent-ink:#02101d; --accent-soft:rgb(88 212 255 / 14%); --stitch:#ff5c7d; --stitch-soft:rgb(255 92 125 / 13%);
+  --ball:#78dfa9; --strike:#f5c75e; --out:#ff5c7d; --turf:#062b2d; --turf-light:#0b4a42; --dirt:#48271d; --chalk:rgb(231 248 255 / 78%);
+  --serif:'Instrument Serif','Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;
+  --mincho:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Inter','Noto Sans JP','Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'Noto Sans JP',monospace;
+  --display:'Rajdhani','Noto Sans JP',sans-serif; --score:'Bebas Neue','Rajdhani',sans-serif;
+  --gutter:20px; --safe-bottom:env(safe-area-inset-bottom,0px);
+}
+* { box-sizing:border-box; } html { background:var(--bg); }
+body { margin:0; min-width:320px; overflow-x:hidden; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased; font-feature-settings:'palt'; }
+button,input,select { font:inherit; } button { color:inherit; } button:not(:disabled),[role='button'] { cursor:pointer; } button:disabled { cursor:not-allowed; opacity:.4; }
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible { outline:1px solid var(--accent); outline-offset:3px; } input:focus-visible,select:focus-visible { outline:0; } ::selection { background:var(--accent); color:var(--accent-ink); }
+@keyframes rise { from { opacity:0; transform:translateY(12px); filter:blur(4px); } to { opacity:1; transform:none; filter:none; } }
+@keyframes pulse { 50% { opacity:.35; box-shadow:0 0 3px currentColor; } }
+@keyframes fade { from { opacity:0; } to { opacity:1; } }
+@keyframes sheet-up { from { transform:translateY(100%); } to { transform:translateY(0); } }
+@media(max-width:359px) { :root { --gutter:14px; } }
+@media(min-width:720px) { :root { --gutter:32px; } }
