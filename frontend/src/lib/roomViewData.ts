@@ -145,6 +145,12 @@ export type PlayerStatisticSummary = Pick<
   earned_run_average: number | null;
 };
 
+export type PlayerMatchupStatistics = {
+  at_bats: number;
+  hits: number;
+  batting_average: number | null;
+};
+
 export type GameEventUpdateResult = {
   revision: number;
   updatedAt: string;
@@ -403,6 +409,24 @@ export async function loadPlayerStatistics(
   });
   if (error) throw error;
   return data as PlayerStatistics;
+}
+
+/** 同一ルーム内の全試合から、打者と投手の対戦成績を取得する。 */
+export async function loadPlayerMatchupStatistics(
+  roomId: string,
+  batterKey: string,
+  pitcherKey: string,
+): Promise<PlayerMatchupStatistics> {
+  const { data, error } = await requireClient().rpc(
+    "get_player_matchup_statistics",
+    {
+      target_room_id: roomId,
+      target_batter_key: batterKey,
+      target_pitcher_key: pitcherKey,
+    },
+  );
+  if (error) throw error;
+  return data as PlayerMatchupStatistics;
 }
 
 /**

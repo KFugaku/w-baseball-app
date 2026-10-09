@@ -26,6 +26,7 @@ import {
 } from "./lib/roomMemberData";
 import {
   getGameAccess,
+  loadPlayerMatchupStatistics,
   loadRoomPlayerStatisticSummaries,
   loadPlayerStatistics,
   loadViewerGameDetail,
@@ -36,6 +37,7 @@ import {
   type GameAccess,
   type GameEventUpdate,
   type PlateResult,
+  type PlayerMatchupStatistics,
   type PlayerStatisticSummary,
   type PlayerStatistics,
   type ViewerGame,
@@ -194,13 +196,23 @@ const initialMembers: Member[] = [
   ["松本", "晴"],
 ].map(([last, first], i) => ({ id: `m${i}`, last, first }));
 const pastelColors = [
-  "#f7d6d0",
-  "#d9eafa",
-  "#d9efdf",
-  "#f8e5bd",
-  "#eadcf7",
-  "#f9dce7",
+  "#eeaea2",
+  "#a8d0f0",
+  "#a8d9b6",
+  "#efc86f",
+  "#d1b5ed",
+  "#f0b4cd",
 ];
+const strongerPastelColors: Record<string, string> = {
+  "#f7d6d0": "#eeaea2",
+  "#d9eafa": "#a8d0f0",
+  "#d9efdf": "#a8d9b6",
+  "#f8e5bd": "#efc86f",
+  "#eadcf7": "#d1b5ed",
+  "#f9dce7": "#f0b4cd",
+};
+const displayTeamColor = (color: string) =>
+  strongerPastelColors[color.toLowerCase()] ?? color;
 const makeTeam = (name: string, start: number, color: string): Team => ({
   name,
   color,
@@ -390,6 +402,9 @@ function App() {
   >({});
   const [loadedGameStatisticsScope, setLoadedGameStatisticsScope] = useState("");
   const [gameStatisticsError, setGameStatisticsError] = useState("");
+  const [matchupStatistics, setMatchupStatistics] =
+    useState<PlayerMatchupStatistics | null>(null);
+  const [loadedMatchupScope, setLoadedMatchupScope] = useState("");
   const lastGameSyncSignature = useRef<string | null>(null);
   const gameSyncInFlight = useRef(false);
   const skipNextGameSync = useRef(false);
@@ -1194,6 +1209,12 @@ function App() {
     loadedGameStatisticsScope === gameStatisticsScope
       ? gamePlayerStatistics
       : {};
+  const matchupScope =
+    gameStatisticsRoomId && currentBatter.id !== "empty" && pitcher.id !== "empty"
+      ? `${gameStatisticsRoomId}:${currentBatter.id}:${pitcher.id}`
+      : "";
+  const visibleMatchupStatistics =
+    loadedMatchupScope === matchupScope ? matchupStatistics : null;
 
   useEffect(() => {
     const playerKeys = gamePlayerKeySignature
@@ -1226,6 +1247,36 @@ function App() {
     gameStatisticsRoomId,
     gameStatisticsScope,
     gameSyncTick,
+    sharedAccessRevision,
+  ]);
+
+  useEffect(() => {
+    if (!gameStatisticsRoomId || !matchupScope) return;
+    let cancelled = false;
+    void loadPlayerMatchupStatistics(
+      gameStatisticsRoomId,
+      currentBatter.id,
+      pitcher.id,
+    )
+      .then((statistics) => {
+        if (cancelled) return;
+        setMatchupStatistics(statistics);
+        setLoadedMatchupScope(matchupScope);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMatchupStatistics(null);
+        setLoadedMatchupScope(matchupScope);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentBatter.id,
+    gameStatisticsRoomId,
+    gameSyncTick,
+    matchupScope,
+    pitcher.id,
     sharedAccessRevision,
   ]);
   const snapshot = (completedPlateAppearance = false) => {
@@ -2610,7 +2661,7 @@ function App() {
           <PlayerCard
             player={currentBatter}
             label={`${batters[battingSide] + 1}番`}
-            teamColor={battingTeam.color}
+            teamColor={displayTeamColor(battingTeam.color)}
             statistics={visibleGamePlayerStatistics[currentBatter.id]}
             onOpen={() =>
               openPlayerProfile({
@@ -2622,13 +2673,13 @@ function App() {
           <div className="versus">
             <span>VS</span>
             <small>対戦成績</small>
-            <b>2打数 1安打</b>
+            <b>{formatMatchupStatistics(visibleMatchupStatistics)}</b>
           </div>
           <PlayerCard
             player={pitcher}
             label="投手"
             reverse
-            teamColor={fieldingTeam.color}
+            teamColor={displayTeamColor(fieldingTeam.color)}
             statistics={visibleGamePlayerStatistics[pitcher.id]}
             onOpen={() =>
               openPlayerProfile({ player: pitcher, teamName: fieldingTeam.name })
@@ -3658,7 +3709,10 @@ function Score({
   return (
     <div className="score-grid">
       <b className="team-name">
-        <span className="team-dot" style={{ backgroundColor: color }}>
+        <span
+          className="team-dot"
+          style={{ backgroundColor: displayTeamColor(color) }}
+        >
           {mark}
         </span>
         {name}
@@ -3890,6 +3944,11 @@ function formatBattingAverage(value: number | null | undefined) {
   if (value === null || value === undefined) return "---";
   const formatted = value.toFixed(3);
   return value < 1 ? formatted.replace(/^0/, "") : formatted;
+}
+
+function formatMatchupStatistics(statistics: PlayerMatchupStatistics | null) {
+  if (!statistics) return "---";
+  return `${statistics.at_bats}打数 ${statistics.hits}安打`;
 }
 
 function formatEarnedRunAverage(value: number | null | undefined) {
