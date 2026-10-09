@@ -134,6 +134,23 @@ export type PlayerStatistics = {
   }[];
 };
 
+/** 試合中の打順・NOW BATTINGで使う、軽量な成績サマリー。 */
+export type PlayerStatisticSummary = Pick<
+  PlayerStatistics["batting"],
+  "games" | "at_bats" | "hits" | "home_runs" | "runs_batted_in" | "batting_average"
+> & {
+  appearances: number;
+  outs_recorded: number;
+  earned_runs: number;
+  earned_run_average: number | null;
+};
+
+export type PlayerMatchupStatistics = {
+  at_bats: number;
+  hits: number;
+  batting_average: number | null;
+};
+
 export type GameEventUpdateResult = {
   revision: number;
   updatedAt: string;
@@ -392,6 +409,94 @@ export async function loadPlayerStatistics(
   });
   if (error) throw error;
   return data as PlayerStatistics;
+}
+
+/** 同一ルーム内の全試合から、打者と投手の対戦成績を取得する。 */
+export async function loadPlayerMatchupStatistics(
+  roomId: string,
+  batterKey: string,
+  pitcherKey: string,
+): Promise<PlayerMatchupStatistics> {
+  const { data, error } = await requireClient().rpc(
+    "get_player_matchup_statistics",
+    {
+      target_room_id: roomId,
+      target_batter_key: batterKey,
+      target_pitcher_key: pitcherKey,
+    },
+  );
+  if (error) throw error;
+  return data as PlayerMatchupStatistics;
+}
+
+/**
+ * 表示中の打順を一度に取得する。氏名ではなく、試合イベントに保存された player key で対応付ける。
+ */
+export async function loadRoomPlayerStatisticSummaries(
+  roomId: string,
+  playerKeys: string[],
+): Promise<Record<string, PlayerStatisticSummary>> {
+  const uniqueKeys = Array.from(new Set(playerKeys.filter(Boolean)));
+  if (!uniqueKeys.length) return {};
+
+  const { data, error } = await requireClient().rpc(
+    "get_room_player_stat_summaries",
+    {
+      target_room_id: roomId,
+      target_player_keys: uniqueKeys,
+    },
+  );
+  if (error) {
+    // 一括取得用のRPCは導入直後でもあるため、SQLマイグレーションの反映待ちや
+    // PostgRESTのスキーマキャッシュ更新中でも画面を止めない。既存の詳細取得RPCは
+    // 同じ権限・同じ集計ロジックを使っているので、安全な互換経路として利用する。
+    const individualStatistics = await Promise.all(
+      uniqueKeys.map(async (playerKey) => ({
+        playerKey,
+        statistics: await loadPlayerStatistics(roomId, playerKey),
+      })),
+    );
+
+    return Object.fromEntries(
+      individualStatistics.map(({ playerKey, statistics }) => [
+        playerKey,
+        {
+          games: statistics.batting.games,
+          at_bats: statistics.batting.at_bats,
+          hits: statistics.batting.hits,
+          home_runs: statistics.batting.home_runs,
+          runs_batted_in: statistics.batting.runs_batted_in,
+          batting_average: statistics.batting.batting_average,
+          appearances: statistics.pitching.appearances,
+          outs_recorded: statistics.pitching.outs_recorded,
+          earned_runs: statistics.pitching.earned_runs,
+          earned_run_average: statistics.pitching.earned_run_average,
+        } satisfies PlayerStatisticSummary,
+      ]),
+    );
+  }
+
+  return Object.fromEntries(
+    ((data ?? []) as {
+      player_key: string;
+      batting: Pick<
+        PlayerStatistics["batting"],
+        | "games"
+        | "at_bats"
+        | "hits"
+        | "home_runs"
+        | "runs_batted_in"
+        | "batting_average"
+      >;
+      pitching: Pick<
+        PlayerStatistics["pitching"],
+        "appearances" | "outs_recorded" | "earned_runs" | "earned_run_average"
+      >;
+    }[]).map(({ player_key, batting, pitching }) => [
+      player_key,
+      { ...batting, ...pitching },
+    ]),
+  );
 }
 
 /** Realtimeで試合に関係する行が更新されたら、表示を再取得する。 */
