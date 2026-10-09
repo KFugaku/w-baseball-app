@@ -70,15 +70,6 @@ import {
   updatePassword,
 } from "./lib/supabase";
 import "./App.css";
-import "./Extra.css";
-import "./Home.css";
-import "./Field.css";
-import "./FieldRefine.css";
-import "./FieldScale.css";
-import "./Typography.css";
-import "./ColorTheme.css";
-import "./FieldPlayers.css";
-import "./RoomAccess.css";
 
 type Base = 1 | 2 | 3;
 type Member = { id: string; last: string; first: string };
@@ -2589,7 +2580,7 @@ function App() {
       />
     );
   return (
-    <main className="app-shell">
+    <main className="app-shell game-screen">
       <header className="topbar">
         <button
           className="back"
@@ -2621,14 +2612,29 @@ function App() {
       {gameSyncError && <p className="error">{gameSyncError}</p>}
       <section className="scoreboard card">
         <div className="score-head">
-          <span>
-            {game?.status === "試合前" ? "試合前" : `第${inning}回${half}`}
-          </span>
-          <strong>{game?.status}</strong>
+          <strong className={isLiveGame ? "live" : ""}>{game?.status}</strong>
+          <span>{game?.status === "試合前" ? "PLAY BALL 前" : `第${inning}回${half}`}</span>
+        </div>
+        <div className="score-hero">
+          {([
+            ["away", away, awayScore, "先攻"],
+            ["home", home, homeScore, "後攻"],
+          ] as const).map(([side, team, total, order]) => (
+            <div
+              key={side}
+              className={`hero-side ${side} ${isLiveGame && battingSide === side ? "batting" : ""}`}
+              style={{ "--team-color": displayTeamColor(team.color) } as React.CSSProperties}
+            >
+              <span className="hero-name">{team.name}</span>
+              <b className="hero-score">{game?.status === "試合前" ? "–" : total}</b>
+              <small>{order}{isLiveGame && battingSide === side ? " · 攻撃中" : ""}</small>
+            </div>
+          ))}
+          <span className="hero-sep" aria-hidden="true" />
         </div>
         <div className="score-grid score-label">
           <span>TEAM</span>
-          {[1, 2, 3, 4, 5].map((v) => (
+          {Array.from({ length: Math.max(9, game?.scheduledInnings ?? 9) }, (_, index) => index + 1).map((v) => (
             <span key={v}>{v}</span>
           ))}
           <span>R</span>
@@ -2639,6 +2645,7 @@ function App() {
           color={away.color}
           total={awayScore}
           scores={inningScores.away}
+          innings={Math.max(9, game?.scheduledInnings ?? 9)}
           blank={game?.status === "試合前"}
         />
         <Score
@@ -2647,9 +2654,11 @@ function App() {
           color={home.color}
           total={homeScore}
           scores={inningScores.home}
+          innings={Math.max(9, game?.scheduledInnings ?? 9)}
           blank={game?.status === "試合前"}
         />
       </section>
+      <section className="game-stage">
       <section className="at-bat card">
         <div className="section-eyebrow">NOW BATTING</div>
         {isBeforeGame && (
@@ -2739,6 +2748,7 @@ function App() {
         deletePlayer={deleteLineupPlayer}
         onOpenPlayer={openPlayerProfile}
       />
+      </section>
       <section className="history card">
         <div className="section-title">
           <span>試合経過</span>
@@ -3697,6 +3707,7 @@ function Score({
   color,
   total,
   scores,
+  innings = 9,
   blank = false,
 }: {
   name: string;
@@ -3704,6 +3715,7 @@ function Score({
   color: string;
   total: number;
   scores: number[];
+  innings?: number;
   blank?: boolean;
 }) {
   return (
@@ -3717,7 +3729,7 @@ function Score({
         </span>
         {name}
       </b>
-      {Array.from({ length: 5 }, (_, index) => (
+      {Array.from({ length: innings }, (_, index) => (
         <span key={index}>{blank ? "－" : (scores[index] ?? "－")}</span>
       ))}
       <strong>{blank ? "－" : total}</strong>
@@ -4311,7 +4323,29 @@ function Field({
           viewBox="0 0 400 300"
           preserveAspectRatio="none"
         >
-          <path d="M200 280 L60 140 Q200 8 340 140 Z" />
+          <defs>
+            <clipPath id="field-fan-clip" clipPathUnits="objectBoundingBox">
+              <path d="M .5 1 L 0 .46 Q .08 0 .5 0 Q .92 0 1 .46 Z" />
+            </clipPath>
+          </defs>
+          <path
+            className="infield-dirt"
+            d="M200 286 L52 148 Q200 -36 348 148 Z"
+          />
+          <path
+            className="infield-grass"
+            d="M200 254 L112 174 L116 146 L180 96 L220 96 L284 146 L288 174 Z"
+          />
+          <circle className="pitcher-mound" cx="200" cy="180" r="18" />
+          <rect
+            className="pitcher-rubber"
+            x="187"
+            y="176"
+            width="26"
+            height="7"
+            rx="1"
+          />
+          <circle className="home-dirt" cx="200" cy="278" r="29" />
         </svg>
         <div className="bases">
           {([1, 2, 3] as Base[]).map((base) => (
@@ -4431,11 +4465,14 @@ function Lineups({
               : "両チームの打順"}
         </small>
       </div>
-      <div className="lineup-head">
-        <b>{away.name}</b>
-        <b>{home.name}</b>
-      </div>
-      <div className="lineup-columns">
+      <div className="lineup-sides">
+        <div
+          className="lineup-side lineup-side-away"
+          style={{ "--lineup-team-color": displayTeamColor(away.color) } as React.CSSProperties}
+        >
+          <div className="lineup-head">
+            <b><span>A</span>{away.name}</b>
+          </div>
         <Lineup
           team={away}
           id="away"
@@ -4470,6 +4507,14 @@ function Lineups({
             onOpenPlayer,
           }}
         />
+        </div>
+        <div
+          className="lineup-side lineup-side-home"
+          style={{ "--lineup-team-color": displayTeamColor(home.color) } as React.CSSProperties}
+        >
+          <div className="lineup-head">
+            <b><span>B</span>{home.name}</b>
+          </div>
         <Lineup
           team={home}
           id="home"
@@ -4504,6 +4549,7 @@ function Lineups({
             onOpenPlayer,
           }}
         />
+        </div>
       </div>
     </section>
   );
