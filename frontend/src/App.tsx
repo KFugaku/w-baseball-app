@@ -2584,6 +2584,7 @@ function App() {
         </div>
         <Score
           name={away.name}
+          mark="A"
           color={away.color}
           total={awayScore}
           scores={inningScores.away}
@@ -2591,6 +2592,7 @@ function App() {
         />
         <Score
           name={home.name}
+          mark="B"
           color={home.color}
           total={homeScore}
           scores={inningScores.home}
@@ -3640,12 +3642,14 @@ function GameCreateModal({
 }
 function Score({
   name,
+  mark,
   color,
   total,
   scores,
   blank = false,
 }: {
   name: string;
+  mark: "A" | "B";
   color: string;
   total: number;
   scores: number[];
@@ -3654,7 +3658,9 @@ function Score({
   return (
     <div className="score-grid">
       <b className="team-name">
-        <span className="team-dot" style={{ backgroundColor: color }} />
+        <span className="team-dot" style={{ backgroundColor: color }}>
+          {mark}
+        </span>
         {name}
       </b>
       {Array.from({ length: 5 }, (_, index) => (
