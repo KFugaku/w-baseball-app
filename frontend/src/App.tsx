@@ -322,17 +322,29 @@ const readProgressSnapshot = (
   };
 };
 
-function Avatar({ name, small = false }: { name: string; small?: boolean }) {
+function Avatar({
+  name,
+  small = false,
+  silhouette = false,
+}: {
+  name: string;
+  small?: boolean;
+  silhouette?: boolean;
+}) {
   return (
     <span
-      className={`avatar ${small ? "small" : ""}`}
+      className={`avatar ${small ? "small" : ""} ${silhouette ? "silhouette" : ""}`}
       role="img"
       aria-label={`${name}のプロフィール画像`}
     >
-      <span className="avatar-player-icon" aria-hidden="true">
-        <span className="avatar-head" />
-        <span className="avatar-body" />
-      </span>
+      {silhouette ? (
+        <span className="avatar-player-icon" aria-hidden="true">
+          <span className="avatar-head" />
+          <span className="avatar-body" />
+        </span>
+      ) : (
+        name.slice(0, 1)
+      )}
     </span>
   );
 }
@@ -3881,6 +3893,23 @@ function formatInnings(recordedOuts: number | undefined) {
   return `${(recordedOuts / 3).toFixed(1)}回`;
 }
 
+function formatPositionName(position: string) {
+  const names: Record<string, string> = {
+    投: "投手",
+    捕: "捕手",
+    一: "一塁手",
+    二: "二塁手",
+    三: "三塁手",
+    遊: "遊撃手",
+    左: "左翼手",
+    中: "中堅手",
+    右: "右翼手",
+    打: "代打",
+    走: "代走",
+  };
+  return names[position] ?? position;
+}
+
 function PlayerCard({
   player,
   label,
@@ -3899,11 +3928,9 @@ function PlayerCard({
       className={`player player-profile-link ${reverse ? "pitcher" : ""}`}
       onClick={onOpen}
     >
-      <Avatar name={player.last} />
+      <Avatar name={player.last} silhouette />
       <div>
-        <small>
-          {label} {player.pos}
-        </small>
+        <small>{reverse ? label : `${label} ${formatPositionName(player.pos)}`}</small>
         <h2>
           {player.last} {player.first}
         </h2>
