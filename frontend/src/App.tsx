@@ -59,8 +59,16 @@ import {
   type SharedGameRoute,
 } from "./lib/gameRoute";
 import {
+  clearRoomInvitationToken,
+  copyRoomInvitationLink,
+  readRoomInvitationToken,
+  roomInvitationErrorMessage,
+  startRoomViewSessionFromInvitation,
+} from "./lib/roomInvitation";
+import {
   authErrorMessage,
   getCurrentUser,
+  isAnonymousUser,
   isInviteCallback,
   resendSignUpConfirmation,
   signInWithEmail,
@@ -361,6 +369,12 @@ function App() {
   const hadAdminSession = useRef(false);
   const [roomCreateOpen, setRoomCreateOpen] = useState(false);
   const initialSharedGameRoute = readSharedGameRoute();
+  const [initialInvitationToken] = useState(readRoomInvitationToken);
+  const invitationHandled = useRef(false);
+  const [invitationLoading, setInvitationLoading] = useState(
+    Boolean(initialInvitationToken),
+  );
+  const [invitationError, setInvitationError] = useState("");
   const [view, setView] = useState<
       | "entry"
       | "room-access"
@@ -638,12 +652,14 @@ function App() {
     let active = true;
     const applyUser = (user: Awaited<ReturnType<typeof getCurrentUser>>) => {
       if (active) {
-        const isAnonymous = user?.app_metadata?.provider === "anonymous";
+        const isAnonymous = isAnonymousUser(user);
         const isAdmin = Boolean(user) && !isAnonymous;
         setAdminState(isAdmin);
         if (isAdmin) {
           hadAdminSession.current = true;
-          setView((current) => (current === "entry" ? "mypage" : current));
+          // 招待URLの成否が確定するまでは、管理者の自動遷移で画面を上書きしない。
+          if (!initialInvitationToken)
+            setView((current) => (current === "entry" ? "mypage" : current));
         } else if (hadAdminSession.current) {
           hadAdminSession.current = false;
           setAuthNotice(
@@ -662,13 +678,13 @@ function App() {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [initialInvitationToken]);
 
   useEffect(() => {
     if (!authReady || passwordOpen) return;
     void getCurrentUser().then((user) =>
       setAdminState(
-        Boolean(user) && user?.app_metadata?.provider !== "anonymous",
+        Boolean(user) && !isAnonymousUser(user),
       ),
     );
   }, [authReady, passwordOpen]);
@@ -700,6 +716,31 @@ function App() {
     };
     void restoreViewer();
   }, [admin, authReady, view, viewerSession]);
+
+  useEffect(() => {
+    if (!authReady || invitationHandled.current) return;
+    const token = initialInvitationToken;
+    if (!token) return;
+
+    invitationHandled.current = true;
+    void (async () => {
+      try {
+        const session = await startRoomViewSessionFromInvitation(token);
+        const loadedGames = await loadViewerGames(session.roomId);
+        setViewerSession(session);
+        setViewerGames(loadedGames);
+        setViewerError("");
+        setView("viewer-list");
+      } catch (reason) {
+        setInvitationError(roomViewSessionErrorMessage(reason));
+        setView("entry");
+      } finally {
+        // 成否にかかわらず、bearer token をURL・履歴に残さない。
+        clearRoomInvitationToken();
+        setInvitationLoading(false);
+      }
+    })();
+  }, [authReady, initialInvitationToken]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -2280,6 +2321,49 @@ function App() {
         </div>
       </main>
     );
+  if (invitationLoading)
+    return (
+      <main className="entry-layout">
+        <div className="entry-card">
+          <header className="entry-brand">
+            <div className="brand">
+              <span className="brand-ball">●</span>草野球速報
+            </div>
+          </header>
+          <section className="entry-panel">
+            <span className="section-eyebrow">INVITATION</span>
+            <h1>招待リンクを確認しています…</h1>
+            <p>ルームの閲覧画面を開いています。</p>
+          </section>
+        </div>
+      </main>
+    );
+  if (invitationError)
+    return (
+      <main className="entry-layout">
+        <div className="entry-card">
+          <header className="entry-brand">
+            <div className="brand">
+              <span className="brand-ball">●</span>草野球速報
+            </div>
+          </header>
+          <section className="entry-panel">
+            <span className="section-eyebrow">INVITATION</span>
+            <h1>招待リンクを開けません</h1>
+            <p className="error">{invitationError}</p>
+            <button
+              className="primary-action"
+              onClick={() => {
+                setInvitationError("");
+                setView(admin ? "mypage" : "entry");
+              }}
+            >
+              {admin ? "マイページへ" : "トップへ"}
+            </button>
+          </section>
+        </div>
+      </main>
+    );
   if (view === "entry")
     return (
       <EntryScreen
@@ -2377,6 +2461,7 @@ function App() {
           games={viewerGames}
           loading={viewerLoading}
           error={viewerError}
+          accessMethod={viewerSession.accessMethod}
           onOpen={openViewerGame}
           onRefresh={refreshViewerGames}
           onExit={exitViewer}
@@ -2520,6 +2605,7 @@ function App() {
           setViewerGames([]);
           setView("mypage");
         }}
+        onCopyInvitation={() => copyRoomInvitationLink(selectedRoom.id)}
         onLogout={() => setLogoutOpen(true)}
         creating={creating}
         setup={setup}
@@ -3062,6 +3148,7 @@ function ViewerGameList({
   games,
   loading,
   error,
+  accessMethod,
   onOpen,
   onRefresh,
   onExit,
@@ -3072,6 +3159,7 @@ function ViewerGameList({
   games: ViewerGame[];
   loading: boolean;
   error: string;
+  accessMethod: RoomViewSession["accessMethod"];
   onOpen: (id: string) => void;
   onRefresh: () => void;
   onExit: () => void;
@@ -3139,7 +3227,7 @@ function ViewerGameList({
           )}
         </section>
         <p className="viewer-session-notice">
-          この閲覧権限は1時間で自動的に終了します。
+          この閲覧権限は{accessMethod === "invitation" ? "7時間" : "1時間"}で自動的に終了します。
         </p>
         <p className="viewer-session-notice">
           <button className="viewer-signout" onClick={onExit}>
@@ -3341,10 +3429,29 @@ function Home(props: any) {
   const [roomNameEditorOpen, setRoomNameEditorOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
   const [memberSuggestionOpen, setMemberSuggestionOpen] = useState(false);
+  const [invitationNotice, setInvitationNotice] = useState("");
+  const [copyingInvitation, setCopyingInvitation] = useState(false);
   const canManageRoom = Boolean(props.admin && props.room);
   const filteredMemberSuggestions = props.memberSuggestions.filter((name: string) =>
     name.toLocaleLowerCase().includes(props.newMemberName.trim().toLocaleLowerCase()),
   );
+  const copyInvitation = async () => {
+    if (!props.onCopyInvitation) return;
+    setCopyingInvitation(true);
+    setInvitationNotice("");
+    try {
+      const result = await props.onCopyInvitation();
+      setInvitationNotice(
+        result === "manual-copy"
+          ? "招待リンクを表示しました。コピーして共有してください。以前の招待リンクは無効になりました。"
+          : "招待リンクをコピーしました。以前の招待リンクは無効になりました。",
+      );
+    } catch (reason) {
+      setInvitationNotice(roomInvitationErrorMessage(reason));
+    } finally {
+      setCopyingInvitation(false);
+    }
+  };
   return (
     <main className="home-layout">
       <aside className="sidebar">
@@ -3471,6 +3578,21 @@ function Home(props: any) {
               <button className="admin-badge" onClick={props.onLogout}>
                 管理者モード
               </button>
+              {canManageRoom && (
+                <>
+                  <button
+                    type="button"
+                    className="room-invitation"
+                    disabled={copyingInvitation}
+                    onClick={() => void copyInvitation()}
+                  >
+                    {copyingInvitation ? "発行中…" : "招待リンクを発行してコピー"}
+                  </button>
+                  {invitationNotice && (
+                    <small className="room-invitation-notice">{invitationNotice}</small>
+                  )}
+                </>
+              )}
               {canManageRoom && (
                 <button
                   type="button"

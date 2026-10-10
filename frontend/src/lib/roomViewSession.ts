@@ -9,6 +9,7 @@ export type RoomViewSession = {
   roomNumber?: string
   expiresAt: string
   handoffToken?: string
+  accessMethod: 'password' | 'invitation'
 }
 
 type RoomViewSessionWithHandoff = RoomViewSessionRow & {
@@ -16,9 +17,9 @@ type RoomViewSessionWithHandoff = RoomViewSessionRow & {
 }
 
 export class RoomViewSessionError extends Error {
-  readonly code: 'invalid' | 'expired' | 'unavailable'
+  readonly code: 'invalid' | 'expired' | 'unavailable' | 'invitation'
 
-  constructor(code: 'invalid' | 'expired' | 'unavailable') {
+  constructor(code: 'invalid' | 'expired' | 'unavailable' | 'invitation') {
     super(code)
     this.code = code
   }
@@ -40,13 +41,18 @@ function readSession(): RoomViewSession | null {
   }
 }
 
-function storeSession(row: RoomViewSessionWithHandoff, roomNumber?: string): RoomViewSession {
+function storeSession(
+  row: RoomViewSessionWithHandoff,
+  roomNumber?: string,
+  accessMethod: RoomViewSession['accessMethod'] = 'password',
+): RoomViewSession {
   const session: RoomViewSession = {
     roomId: row.room_id,
     roomName: row.room_name,
     roomNumber,
     expiresAt: row.expires_at,
     handoffToken: row.handoff_token,
+    accessMethod,
   }
   window.sessionStorage.setItem(storageKey, JSON.stringify(session))
   return session
@@ -108,7 +114,34 @@ export async function startRoomViewSession(
     throw new RoomViewSessionError('invalid')
   }
 
-  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber)
+  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber, 'password')
+}
+
+/** 招待URLのトークンを一度だけ照合し、同じ閲覧専用セッション形式で保存する。 */
+export async function startRoomViewSessionFromInvitation(
+  invitationToken: string,
+): Promise<RoomViewSession> {
+  if (!/^[0-9a-f]{64}$/.test(invitationToken)) {
+    throw new RoomViewSessionError('invitation')
+  }
+
+  await ensureViewerIdentity()
+  const { data, error } = await supabase!.rpc('start_room_view_session_from_invitation', {
+    invitation_token: invitationToken,
+  })
+
+  if (error) {
+    if (/招待リンクを確認できませんでした/i.test(error.message)) {
+      throw new RoomViewSessionError('invitation')
+    }
+    throw error
+  }
+
+  if (!Array.isArray(data) || !data[0]) {
+    throw new RoomViewSessionError('invitation')
+  }
+
+  return storeSession(data[0] as RoomViewSessionWithHandoff, undefined, 'invitation')
 }
 
 /**
@@ -128,6 +161,7 @@ export async function claimRoomViewSession(): Promise<RoomViewSession | null> {
   return storeSession(
     { ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken },
     current.roomNumber,
+    current.accessMethod,
   )
 }
 
@@ -150,9 +184,10 @@ export function roomViewSessionErrorMessage(error: unknown): string {
   if (error instanceof RoomViewSessionError) {
     if (error.code === 'expired') return '閲覧期限が切れました。ルーム番号とパスワードをもう一度入力してください。'
     if (error.code === 'unavailable') return '閲覧機能を開始できません。Supabaseの設定を確認してください。'
+    if (error.code === 'invitation') return '招待リンクが無効か、再発行されています。管理者に新しいリンクを共有してもらってください。'
   }
   if (error instanceof Error) {
-    if (/start_room_view_session_with_handoff|schema cache|could not find the function/i.test(error.message)) {
+    if (/start_room_view_session_with_handoff|start_room_view_session_from_invitation|schema cache|could not find the function/i.test(error.message)) {
       return '閲覧認証機能の準備を反映中です。最新のSQLを実行してから、画面を再読み込みしてください。'
     }
     if (/permission denied/i.test(error.message)) {
