@@ -132,3 +132,6 @@ body:after{position:fixed;z-index:-1;inset:0;pointer-events:none;background:repe
 .runner:hover .avatar{transform:scale(1.08);box-shadow:0 0 0 3px rgb(255 92 125 / 18%),0 0 24px rgb(255 92 125 / 80%)}
 .runner-base-1{top:65%;left:68%}.runner-base-2{top:40%;left:50%}.runner-base-3{top:65%;left:32%}
 @media(min-width:900px){.runner .avatar{width:42px;height:42px;font-size:15px}.runner b{max-width:92px;font-size:11px}}
+
+/* Owner-only invitation control in the room header. */
+.room-invitation{min-height:32px;border:1px solid rgb(117 215 255 / 52%);border-radius:999px;padding:5px 10px;background:rgb(88 212 255 / 10%);color:#a9eaff;font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.04em}.room-invitation:hover:not(:disabled){border-color:#b6efff;background:rgb(88 212 255 / 18%);box-shadow:0 0 14px rgb(88 212 255 / 24%)}.room-invitation:disabled{opacity:.65}.room-invitation-notice{max-width:210px;color:var(--accent);font-family:var(--sans);font-size:10px;line-height:1.45;text-align:right}

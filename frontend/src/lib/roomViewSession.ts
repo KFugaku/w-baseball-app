@@ -16,9 +16,9 @@ type RoomViewSessionWithHandoff = RoomViewSessionRow & {
 }
 
 export class RoomViewSessionError extends Error {
-  readonly code: 'invalid' | 'expired' | 'unavailable'
+  readonly code: 'invalid' | 'expired' | 'unavailable' | 'invitation'
 
-  constructor(code: 'invalid' | 'expired' | 'unavailable') {
+  constructor(code: 'invalid' | 'expired' | 'unavailable' | 'invitation') {
     super(code)
     this.code = code
   }
@@ -111,6 +111,33 @@ export async function startRoomViewSession(
   return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber)
 }
 
+/** 招待URLのトークンを一度だけ照合し、同じ閲覧専用セッション形式で保存する。 */
+export async function startRoomViewSessionFromInvitation(
+  invitationToken: string,
+): Promise<RoomViewSession> {
+  if (!/^[0-9a-f]{64}$/.test(invitationToken)) {
+    throw new RoomViewSessionError('invitation')
+  }
+
+  await ensureViewerIdentity()
+  const { data, error } = await supabase!.rpc('start_room_view_session_from_invitation', {
+    invitation_token: invitationToken,
+  })
+
+  if (error) {
+    if (/招待リンクを確認できませんでした/i.test(error.message)) {
+      throw new RoomViewSessionError('invitation')
+    }
+    throw error
+  }
+
+  if (!Array.isArray(data) || !data[0]) {
+    throw new RoomViewSessionError('invitation')
+  }
+
+  return storeSession(data[0] as RoomViewSessionWithHandoff)
+}
+
 /**
  * メールログインなどで Auth の利用者IDが切り替わったあと、同じタブの閲覧権限を復元する。
  * トークンはパスワードではなく、認証時にサーバーが発行した短命のランダム値である。
@@ -150,9 +177,10 @@ export function roomViewSessionErrorMessage(error: unknown): string {
   if (error instanceof RoomViewSessionError) {
     if (error.code === 'expired') return '閲覧期限が切れました。ルーム番号とパスワードをもう一度入力してください。'
     if (error.code === 'unavailable') return '閲覧機能を開始できません。Supabaseの設定を確認してください。'
+    if (error.code === 'invitation') return '招待リンクが無効か、再発行されています。管理者に新しいリンクを共有してもらってください。'
   }
   if (error instanceof Error) {
-    if (/start_room_view_session_with_handoff|schema cache|could not find the function/i.test(error.message)) {
+    if (/start_room_view_session_with_handoff|start_room_view_session_from_invitation|schema cache|could not find the function/i.test(error.message)) {
       return '閲覧認証機能の準備を反映中です。最新のSQLを実行してから、画面を再読み込みしてください。'
     }
     if (/permission denied/i.test(error.message)) {

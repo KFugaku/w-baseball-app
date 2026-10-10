@@ -59,6 +59,13 @@ import {
   type SharedGameRoute,
 } from "./lib/gameRoute";
 import {
+  clearRoomInvitationToken,
+  copyRoomInvitationLink,
+  readRoomInvitationToken,
+  roomInvitationErrorMessage,
+  startRoomViewSessionFromInvitation,
+} from "./lib/roomInvitation";
+import {
   authErrorMessage,
   getCurrentUser,
   isInviteCallback,
@@ -361,6 +368,11 @@ function App() {
   const hadAdminSession = useRef(false);
   const [roomCreateOpen, setRoomCreateOpen] = useState(false);
   const initialSharedGameRoute = readSharedGameRoute();
+  const initialInvitationToken = readRoomInvitationToken();
+  const invitationHandled = useRef(false);
+  const [invitationLoading, setInvitationLoading] = useState(
+    Boolean(initialInvitationToken),
+  );
   const [view, setView] = useState<
       | "entry"
       | "room-access"
@@ -700,6 +712,31 @@ function App() {
     };
     void restoreViewer();
   }, [admin, authReady, view, viewerSession]);
+
+  useEffect(() => {
+    if (!authReady || invitationHandled.current) return;
+    const token = readRoomInvitationToken();
+    if (!token) return;
+
+    invitationHandled.current = true;
+    void (async () => {
+      try {
+        const session = await startRoomViewSessionFromInvitation(token);
+        const loadedGames = await loadViewerGames(session.roomId);
+        setViewerSession(session);
+        setViewerGames(loadedGames);
+        setViewerError("");
+        setView("viewer-list");
+      } catch (reason) {
+        setAuthNotice(roomViewSessionErrorMessage(reason));
+        setView("entry");
+      } finally {
+        // 成否にかかわらず、bearer token をURL・履歴に残さない。
+        clearRoomInvitationToken();
+        setInvitationLoading(false);
+      }
+    })();
+  }, [authReady]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -2280,6 +2317,23 @@ function App() {
         </div>
       </main>
     );
+  if (invitationLoading)
+    return (
+      <main className="entry-layout">
+        <div className="entry-card">
+          <header className="entry-brand">
+            <div className="brand">
+              <span className="brand-ball">●</span>草野球速報
+            </div>
+          </header>
+          <section className="entry-panel">
+            <span className="section-eyebrow">INVITATION</span>
+            <h1>招待リンクを確認しています…</h1>
+            <p>ルームの閲覧画面を開いています。</p>
+          </section>
+        </div>
+      </main>
+    );
   if (view === "entry")
     return (
       <EntryScreen
@@ -2520,6 +2574,7 @@ function App() {
           setViewerGames([]);
           setView("mypage");
         }}
+        onCopyInvitation={() => copyRoomInvitationLink(selectedRoom.id)}
         onLogout={() => setLogoutOpen(true)}
         creating={creating}
         setup={setup}
@@ -3341,10 +3396,29 @@ function Home(props: any) {
   const [roomNameEditorOpen, setRoomNameEditorOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
   const [memberSuggestionOpen, setMemberSuggestionOpen] = useState(false);
+  const [invitationNotice, setInvitationNotice] = useState("");
+  const [copyingInvitation, setCopyingInvitation] = useState(false);
   const canManageRoom = Boolean(props.admin && props.room);
   const filteredMemberSuggestions = props.memberSuggestions.filter((name: string) =>
     name.toLocaleLowerCase().includes(props.newMemberName.trim().toLocaleLowerCase()),
   );
+  const copyInvitation = async () => {
+    if (!props.onCopyInvitation) return;
+    setCopyingInvitation(true);
+    setInvitationNotice("");
+    try {
+      const result = await props.onCopyInvitation();
+      setInvitationNotice(
+        result === "manual-copy"
+          ? "招待リンクを表示しました。コピーして共有してください。以前の招待リンクは無効になりました。"
+          : "招待リンクをコピーしました。以前の招待リンクは無効になりました。",
+      );
+    } catch (reason) {
+      setInvitationNotice(roomInvitationErrorMessage(reason));
+    } finally {
+      setCopyingInvitation(false);
+    }
+  };
   return (
     <main className="home-layout">
       <aside className="sidebar">
@@ -3471,6 +3545,21 @@ function Home(props: any) {
               <button className="admin-badge" onClick={props.onLogout}>
                 管理者モード
               </button>
+              {canManageRoom && (
+                <>
+                  <button
+                    type="button"
+                    className="room-invitation"
+                    disabled={copyingInvitation}
+                    onClick={() => void copyInvitation()}
+                  >
+                    {copyingInvitation ? "発行中…" : "招待リンクを発行してコピー"}
+                  </button>
+                  {invitationNotice && (
+                    <small className="room-invitation-notice">{invitationNotice}</small>
+                  )}
+                </>
+              )}
               {canManageRoom && (
                 <button
                   type="button"
