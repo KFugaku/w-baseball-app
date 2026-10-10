@@ -43,6 +43,7 @@ export type TeamRow = {
   id: string
   room_id: string
   name: string
+  abbreviation: string
   color: string | null
   created_at: string
   updated_at: string

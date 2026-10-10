@@ -4,6 +4,7 @@ import { loadSnapshot, saveSnapshot } from "./lib/persistence";
 import {
   createOwnedGame,
   gameCreationErrorMessage,
+  updateOwnedTeamConfiguration,
   type ExistingRoomForGame,
   type GameCreationInput,
 } from "./lib/gameCreationData";
@@ -89,7 +90,13 @@ type Player = Member & {
 };
 type PlayerProfile = { player: Player; teamName: string };
 type PlayerProfileTab = "batting" | "pitching" | "plate-appearances";
-type Team = { name: string; color: string; players: Player[]; bench: Player[] };
+type Team = {
+  name: string;
+  abbreviation: string;
+  color: string;
+  players: Player[];
+  bench: Player[];
+};
 type Game = {
   id: string;
   title: string;
@@ -101,6 +108,8 @@ type Game = {
   homeScore: number | null;
   awayColor?: string;
   homeColor?: string;
+  awayAbbreviation?: string;
+  homeAbbreviation?: string;
 };
 type TeamSide = "away" | "home";
 type Batters = Record<TeamSide, number>;
@@ -212,8 +221,10 @@ const strongerPastelColors: Record<string, string> = {
 };
 const displayTeamColor = (color: string) =>
   strongerPastelColors[color.toLowerCase()] ?? color;
+const defaultTeamAbbreviation = (name: string) => name.trim().slice(0, 4);
 const makeTeam = (name: string, start: number, color: string): Team => ({
   name,
+  abbreviation: defaultTeamAbbreviation(name),
   color,
   players: positions.slice(0, 9).map((pos, i) => ({
     ...initialMembers[start + i],
@@ -226,6 +237,7 @@ const makeTeam = (name: string, start: number, color: string): Team => ({
 });
 const emptyTeam = (name: string, color: string): Team => ({
   name,
+  abbreviation: defaultTeamAbbreviation(name),
   color,
   players: [],
   bench: [],
@@ -422,6 +434,8 @@ function App() {
   const loadedSharedGameRevision = useRef<number | null>(null);
   const inningStartTimer = useRef<number | null>(null);
   const pendingInningStart = useRef<string | null>(null);
+  const resultClearTimer = useRef<number | null>(null);
+  const slotIdSeed = useRef(0);
   const [selectedRoom, setSelectedRoom] = useState<OwnedRoom | null>(null);
   const [viewerSession, setViewerSession] = useState<RoomViewSession | null>(
       null,
@@ -471,6 +485,8 @@ function App() {
     [setup, setSetup] = useState({
       away: "チームA",
       home: "チームB",
+      awayAbbreviation: "チーム",
+      homeAbbreviation: "チーム",
       awayColor: pastelColors[0],
       homeColor: pastelColors[1],
       scheduledInnings: 9,
@@ -484,6 +500,7 @@ function App() {
     [gameTeams, setGameTeams] = useState<
       Record<string, { away: Team; home: Team }>
     >({}),
+    [teamSettingsSide, setTeamSettingsSide] = useState<TeamSide | null>(null),
     [drag, setDragState] = useState<DragState>(null),
     [lineupDropTarget, setLineupDropTarget] =
       useState<LineupDropTarget>(null),
@@ -644,6 +661,8 @@ function App() {
     () => () => {
       if (inningStartTimer.current !== null)
         window.clearTimeout(inningStartTimer.current);
+      if (resultClearTimer.current !== null)
+        window.clearTimeout(resultClearTimer.current);
     },
     [],
   );
@@ -761,12 +780,12 @@ function App() {
       } else {
         setSharedGameAccess(null);
         setView(
-          viewerSession
-            ? "viewer-list"
-            : selectedRoom
-              ? "room-games"
-              : admin
-                ? "mypage"
+          selectedRoom
+            ? "room-games"
+            : admin
+              ? "mypage"
+              : viewerSession
+                ? "viewer-list"
                 : "entry",
         );
       }
@@ -915,14 +934,28 @@ function App() {
           homeScore: detail.state?.home_score ?? detail.home.score,
           awayColor: detail.away.color,
           homeColor: detail.home.color,
+          awayAbbreviation: detail.away.abbreviation,
+          homeAbbreviation: detail.home.abbreviation,
         };
         const progress = readProgressSnapshot(detail.state?.snapshot);
-        const nextAway =
-            progress.teams?.away ??
-            emptyTeam(detail.away.name, detail.away.color),
-          nextHome =
-            progress.teams?.home ??
-            emptyTeam(detail.home.name, detail.home.color);
+        // チーム設定は試合をまたいで共有されるため、古いスナップショットより
+        // 最新の teams 行にある名称・略称・カラーを優先する。
+        const nextAway: Team = {
+            ...(progress.teams?.away ??
+              emptyTeam(detail.away.name, detail.away.color)),
+            name: detail.away.name,
+            abbreviation:
+              detail.away.abbreviation || defaultTeamAbbreviation(detail.away.name),
+            color: detail.away.color,
+          },
+          nextHome: Team = {
+            ...(progress.teams?.home ??
+              emptyTeam(detail.home.name, detail.home.color)),
+            name: detail.home.name,
+            abbreviation:
+              detail.home.abbreviation || defaultTeamAbbreviation(detail.home.name),
+            color: detail.home.color,
+          };
         skipNextGameSync.current = true;
         lastGameSyncSignature.current = null;
         setGameRevision(detail.state?.revision ?? 0);
@@ -1016,7 +1049,7 @@ function App() {
       timer = window.setTimeout(() => {
         setSharedAccessRevision((value) => value + 1);
       }, 120);
-    });
+    }, sharedGameRoute.roomId);
     return () => {
       if (timer) window.clearTimeout(timer);
       unsubscribe();
@@ -1438,9 +1471,18 @@ function App() {
     setHistory(rest);
     setResultType(null);
   };
+  const showTransientResult = (text: string) => {
+    if (resultClearTimer.current !== null)
+      window.clearTimeout(resultClearTimer.current);
+    setResult(text);
+    resultClearTimer.current = window.setTimeout(() => {
+      setResult("");
+      resultClearTimer.current = null;
+    }, 5000);
+  };
   const log = (text: string, runs = 0) => {
     pendingInningStart.current = null;
-    setResult(text);
+    showTransientResult(text);
     const nextAwayScore = awayScore + (battingSide === "away" ? runs : 0);
     const nextHomeScore = homeScore + (battingSide === "home" ? runs : 0);
     const scoreSummary = runs
@@ -1507,18 +1549,9 @@ function App() {
     setRunners({});
     setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
-    const token = crypto.randomUUID();
-    pendingInningStart.current = token;
-    if (inningStartTimer.current !== null)
-      window.clearTimeout(inningStartTimer.current);
-    inningStartTimer.current = window.setTimeout(() => {
-      if (pendingInningStart.current !== token) return;
-      const startText = `${nextInning}回${nextHalf}開始`;
-      pendingInningStart.current = null;
-      inningStartTimer.current = null;
-      setResult(startText);
-      setPlays((items) => [startText, ...items]);
-    }, 3000);
+    // 打席結果を5秒間表示してから消す。回の切り替えで別の文言に
+    // 上書きしないため、結果を確認してから次の打席へ移れる。
+    pendingInningStart.current = null;
   };
   const out = (text: string, plateResult: PlateResult) => {
     if (!isLiveGame) return;
@@ -1744,6 +1777,58 @@ function App() {
         },
       }));
   };
+  const saveTeamConfiguration = async (
+    side: TeamSide,
+    settings: Pick<Team, "name" | "abbreviation" | "color">,
+  ) => {
+    const roomId = sharedGameRoute?.roomId ?? selectedRoom?.id;
+    const current = side === "away" ? away : home;
+    if (!roomId) throw new Error("チーム設定を保存するルームを確認できませんでした。");
+    if (!settings.name.trim()) throw new Error("チーム名を入力してください。");
+    if (settings.name.trim() !== current.name && settings.name.trim() === (side === "away" ? home : away).name)
+      throw new Error("先攻と後攻には異なるチーム名を入力してください。");
+    if (settings.abbreviation.trim().length > 8)
+      throw new Error("略称は8文字以内で入力してください。");
+
+    await updateOwnedTeamConfiguration({
+      roomId,
+      currentName: current.name,
+      name: settings.name,
+      abbreviation: settings.abbreviation,
+      color: settings.color,
+    });
+    const updated: Team = { ...current, ...settings, name: settings.name.trim(), abbreviation: settings.abbreviation.trim() };
+    updateTeam(side, updated);
+    setGame((currentGame) =>
+      currentGame
+        ? {
+            ...currentGame,
+            [side]: updated.name,
+            [`${side}Color`]: updated.color,
+            [`${side}Abbreviation`]: updated.abbreviation,
+          }
+        : currentGame,
+    );
+    setSelectedRoom((room) =>
+      room
+        ? {
+            ...room,
+            games: room.games.map((roomGame) => ({
+              ...roomGame,
+              away:
+                roomGame.away.name === current.name
+                  ? { ...roomGame.away, name: updated.name, abbreviation: updated.abbreviation, color: updated.color }
+                  : roomGame.away,
+              home:
+                roomGame.home.name === current.name
+                  ? { ...roomGame.home, name: updated.name, abbreviation: updated.abbreviation, color: updated.color }
+                  : roomGame.home,
+            })),
+          }
+        : room,
+    );
+    setTeamSettingsSide(null);
+  };
   const team = (which: "away" | "home") => (which === "away" ? away : home);
   const recordSubstitution = (outgoing: Player, incoming: Player) => {
     if (
@@ -1765,7 +1850,7 @@ function App() {
       eventType: "player_substitution",
       description,
     });
-    setResult(display);
+    showTransientResult(display);
     setResultType(null);
     setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
   };
@@ -1783,7 +1868,7 @@ function App() {
       eventType: "defensive_position_change",
       description,
     });
-    setResult(display);
+    showTransientResult(display);
     setResultType(null);
     setPlays((items) => [`${inning}回${half} ${display}`, ...items]);
   };
@@ -1939,7 +2024,7 @@ function App() {
     }
     if (sourcePlayers >= 0)
       players[sourcePlayers] = {
-        id: `slot-${Date.now()}`,
+        id: `slot-${++slotIdSeed.current}`,
         last: "未設定",
         first: "",
         pos: players[sourcePlayers].pos,
@@ -2124,12 +2209,12 @@ function App() {
     setSharedGameAccess(null);
     setSharedGameError("");
     setView(
-      viewerSession
-        ? "viewer-list"
-        : selectedRoom
-          ? "room-games"
-          : admin
-            ? "mypage"
+      selectedRoom
+        ? "room-games"
+        : admin
+          ? "mypage"
+          : viewerSession
+            ? "viewer-list"
             : "entry",
     );
   };
@@ -2178,10 +2263,18 @@ function App() {
     const saved = gameTeams[selected.id],
       nextAway =
         saved?.away ??
-        makeTeam(selected.away, 0, selected.awayColor ?? pastelColors[0]),
+        {
+          ...makeTeam(selected.away, 0, selected.awayColor ?? pastelColors[0]),
+          abbreviation:
+            selected.awayAbbreviation ?? defaultTeamAbbreviation(selected.away),
+        },
       nextHome =
         saved?.home ??
-        makeTeam(selected.home, 9, selected.homeColor ?? pastelColors[1]);
+        {
+          ...makeTeam(selected.home, 9, selected.homeColor ?? pastelColors[1]),
+          abbreviation:
+            selected.homeAbbreviation ?? defaultTeamAbbreviation(selected.home),
+        };
     setGame(selected);
     setAway(nextAway);
     setHome(nextHome);
@@ -2207,9 +2300,17 @@ function App() {
         homeScore: 0,
         awayColor: created.game.away.color,
         homeColor: created.game.home.color,
+        awayAbbreviation: created.game.away.abbreviation,
+        homeAbbreviation: created.game.home.abbreviation,
       },
-      nextAway = emptyTeam(added.away, created.game.away.color),
-      nextHome = emptyTeam(added.home, created.game.home.color);
+      nextAway = {
+        ...emptyTeam(added.away, created.game.away.color),
+        abbreviation: created.game.away.abbreviation,
+      },
+      nextHome = {
+        ...emptyTeam(added.home, created.game.home.color),
+        abbreviation: created.game.home.abbreviation,
+      };
     setGames((g) => [...g, added]);
     setSelectedRoom((current) => ({
       id: created.room.id,
@@ -2263,11 +2364,27 @@ function App() {
     setGame(null);
   };
   const handleSharedAuthentication = async () => {
+    // 閲覧中に管理者ログインした場合も、一覧側と同じ所有ルーム状態を持つ。
+    // viewerSession はログアウト時に閲覧へ戻すために保持し、遷移だけは
+    // 所有者のルーム／マイページを優先する。
+    setAdminState(true);
+    hadAdminSession.current = true;
     try {
       const restored = await claimRoomViewSession();
       if (restored) setViewerSession(restored);
     } catch {
       /* 所有者は閲覧セッションがなくても続行できる */
+    }
+    try {
+      const ownedRooms = await loadOwnedRooms();
+      const ownedRoom = ownedRooms.find(
+        (room) => room.id === sharedGameRoute?.roomId,
+      );
+      setSelectedRoom(ownedRoom ?? null);
+    } catch {
+      // 認証直後の一覧取得が一時的に失敗しても、試合画面は維持して
+      // Auth状態の再取得時にマイページへ戻れるようにする。
+      setSelectedRoom(null);
     } finally {
       setSharedGameLoading(true);
       setSharedGameError("");
@@ -2284,6 +2401,7 @@ function App() {
       setView("room-games");
       return;
     }
+    setSelectedRoom(null);
     setView("mypage");
   };
   const logout = async () => {
@@ -2485,6 +2603,8 @@ function App() {
       homeScore: selected.home.score,
       awayColor: selected.away.color,
       homeColor: selected.home.color,
+      awayAbbreviation: selected.away.abbreviation,
+      homeAbbreviation: selected.home.abbreviation,
     }));
     return (
       <div className="viewer-room-mode">
@@ -2561,6 +2681,8 @@ function App() {
       homeScore: selected.home.score,
       awayColor: selected.away.color,
       homeColor: selected.home.color,
+      awayAbbreviation: selected.away.abbreviation,
+      homeAbbreviation: selected.home.abbreviation,
     }));
     return (
       <Home
@@ -2711,7 +2833,18 @@ function App() {
               className={`hero-side ${side} ${isLiveGame && battingSide === side ? "batting" : ""}`}
               style={{ "--team-color": displayTeamColor(team.color) } as React.CSSProperties}
             >
-              <span className="hero-name">{team.name}</span>
+              {canEditGame ? (
+                <button
+                  type="button"
+                  className="hero-name team-settings-trigger"
+                  onClick={() => setTeamSettingsSide(side)}
+                  title={`${team.name}の設定を編集`}
+                >
+                  {team.name}
+                </button>
+              ) : (
+                <span className="hero-name">{team.name}</span>
+              )}
               <b className="hero-score">{game?.status === "試合前" ? "–" : total}</b>
               <small>{order}{isLiveGame && battingSide === side ? " · 攻撃中" : ""}</small>
             </div>
@@ -2727,21 +2860,25 @@ function App() {
         </div>
         <Score
           name={away.name}
-          mark="A"
+          abbreviation={away.abbreviation}
           color={away.color}
           total={awayScore}
           scores={inningScores.away}
           innings={Math.max(9, game?.scheduledInnings ?? 9)}
           blank={game?.status === "試合前"}
+          editable={canEditGame}
+          onEdit={() => setTeamSettingsSide("away")}
         />
         <Score
           name={home.name}
-          mark="B"
+          abbreviation={home.abbreviation}
           color={home.color}
           total={homeScore}
           scores={inningScores.home}
           innings={Math.max(9, game?.scheduledInnings ?? 9)}
           blank={game?.status === "試合前"}
+          editable={canEditGame}
+          onEdit={() => setTeamSettingsSide("home")}
         />
       </section>
       <section className="game-stage">
@@ -2973,6 +3110,14 @@ function App() {
             </div>
           </div>
         </section>
+      )}
+      {teamSettingsSide && (
+        <TeamSettingsModal
+          team={teamSettingsSide === "away" ? away : home}
+          order={teamSettingsSide === "away" ? "先攻" : "後攻"}
+          close={() => setTeamSettingsSide(null)}
+          onSave={(settings) => saveTeamConfiguration(teamSettingsSide, settings)}
+        />
       )}
       <AuthModal
         open={passwordOpen}
@@ -3689,6 +3834,8 @@ function GameCreateModal({
   setup: {
     away: string;
     home: string;
+    awayAbbreviation: string;
+    homeAbbreviation: string;
     awayColor: string;
     homeColor: string;
     scheduledInnings: number;
@@ -3696,6 +3843,8 @@ function GameCreateModal({
   setSetup: (value: {
     away: string;
     home: string;
+    awayAbbreviation: string;
+    homeAbbreviation: string;
     awayColor: string;
     homeColor: string;
     scheduledInnings: number;
@@ -3721,8 +3870,10 @@ function GameCreateModal({
       await onCreate({
         room,
         awayName: setup.away,
+      awayAbbreviation: setup.awayAbbreviation,
         awayColor: setup.awayColor,
         homeName: setup.home,
+      homeAbbreviation: setup.homeAbbreviation,
         homeColor: setup.homeColor,
         scheduledInnings: setup.scheduledInnings,
       });
@@ -3757,6 +3908,30 @@ function GameCreateModal({
           maxLength={80}
           placeholder="後攻チーム名"
         />
+        <div className="team-abbreviation-fields">
+          <label>
+            先攻の略称
+            <input
+              value={setup.awayAbbreviation}
+              onChange={(event) =>
+                setSetup({ ...setup, awayAbbreviation: event.target.value })
+              }
+              maxLength={8}
+              placeholder="例：日"
+            />
+          </label>
+          <label>
+            後攻の略称
+            <input
+              value={setup.homeAbbreviation}
+              onChange={(event) =>
+                setSetup({ ...setup, homeAbbreviation: event.target.value })
+              }
+              maxLength={8}
+              placeholder="例：巨"
+            />
+          </label>
+        </div>
         <label className="scheduled-innings-field">
           予定回数
           <select
@@ -3778,36 +3953,16 @@ function GameCreateModal({
           </select>
         </label>
         <div className="color-choices">
-          <label>
-            先攻カラー
-            <select
-              value={setup.awayColor}
-              onChange={(event) =>
-                setSetup({ ...setup, awayColor: event.target.value })
-              }
-            >
-              {pastelColors.map((color) => (
-                <option value={color} key={color}>
-                  {color}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            後攻カラー
-            <select
-              value={setup.homeColor}
-              onChange={(event) =>
-                setSetup({ ...setup, homeColor: event.target.value })
-              }
-            >
-              {pastelColors.map((color) => (
-                <option value={color} key={color}>
-                  {color}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ColorPalette
+            label="先攻カラー"
+            value={setup.awayColor}
+            onChange={(awayColor) => setSetup({ ...setup, awayColor })}
+          />
+          <ColorPalette
+            label="後攻カラー"
+            value={setup.homeColor}
+            onChange={(homeColor) => setSetup({ ...setup, homeColor })}
+          />
         </div>
         {error && <small className="error">{error}</small>}
         <button disabled={busy}>{busy ? "作成中…" : "試合を作成"}</button>
@@ -3825,36 +3980,124 @@ function GameCreateModal({
 }
 function Score({
   name,
-  mark,
+  abbreviation,
   color,
   total,
   scores,
   innings = 9,
   blank = false,
+  editable = false,
+  onEdit,
 }: {
   name: string;
-  mark: "A" | "B";
+  abbreviation: string;
   color: string;
   total: number;
   scores: number[];
   innings?: number;
   blank?: boolean;
+  editable?: boolean;
+  onEdit?: () => void;
 }) {
   return (
     <div className="score-grid">
-      <b className="team-name">
+      <button
+        type="button"
+        className={`team-name ${editable ? "team-settings-trigger" : ""}`}
+        disabled={!editable}
+        onClick={onEdit}
+        title={editable ? `${name}の設定を編集` : undefined}
+      >
         <span
           className="team-dot"
           style={{ backgroundColor: displayTeamColor(color) }}
         >
-          {mark}
+          {abbreviation || defaultTeamAbbreviation(name)}
         </span>
         {name}
-      </b>
+      </button>
       {Array.from({ length: innings }, (_, index) => (
         <span key={index}>{blank ? "－" : (scores[index] ?? "－")}</span>
       ))}
       <strong>{blank ? "－" : total}</strong>
+    </div>
+  );
+}
+function ColorPalette({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <fieldset className="color-palette">
+      <legend>{label}</legend>
+      <div>
+        {pastelColors.map((color) => (
+          <button
+            type="button"
+            key={color}
+            className={value === color ? "selected" : ""}
+            style={{ "--palette-color": displayTeamColor(color) } as React.CSSProperties}
+            onClick={() => onChange(color)}
+            aria-label={`${label}: ${color}`}
+            aria-pressed={value === color}
+          />
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+function TeamSettingsModal({
+  team,
+  order,
+  close,
+  onSave,
+}: {
+  team: Team;
+  order: string;
+  close: () => void;
+  onSave: (settings: Pick<Team, "name" | "abbreviation" | "color">) => Promise<void>;
+}) {
+  const [name, setName] = useState(team.name);
+  const [abbreviation, setAbbreviation] = useState(team.abbreviation);
+  const [color, setColor] = useState(team.color);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSaving(true);
+    try {
+      await onSave({ name, abbreviation, color });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "チーム設定を保存できませんでした。");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop">
+      <form className="setup-modal team-settings-modal" onSubmit={(event) => void submit(event)}>
+        <span className="section-eyebrow">TEAM SETTINGS</span>
+        <h2>{order}チームを編集</h2>
+        <p>保存すると、このルーム内で同じチームを使う試合にも名称・略称・カラーが反映されます。</p>
+        <label>
+          チーム名
+          <input autoFocus value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <label>
+          スコアボード用の略称
+          <input value={abbreviation} maxLength={8} placeholder="例：日" onChange={(event) => setAbbreviation(event.target.value)} />
+        </label>
+        <ColorPalette label="チームカラー" value={color} onChange={setColor} />
+        {error && <small className="error">{error}</small>}
+        <button disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+        <button type="button" className="cancel" disabled={saving} onClick={close}>キャンセル</button>
+      </form>
     </div>
   );
 }
