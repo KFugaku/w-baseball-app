@@ -368,11 +368,12 @@ function App() {
   const hadAdminSession = useRef(false);
   const [roomCreateOpen, setRoomCreateOpen] = useState(false);
   const initialSharedGameRoute = readSharedGameRoute();
-  const initialInvitationToken = readRoomInvitationToken();
+  const [initialInvitationToken] = useState(readRoomInvitationToken);
   const invitationHandled = useRef(false);
   const [invitationLoading, setInvitationLoading] = useState(
     Boolean(initialInvitationToken),
   );
+  const [invitationError, setInvitationError] = useState("");
   const [view, setView] = useState<
       | "entry"
       | "room-access"
@@ -655,7 +656,9 @@ function App() {
         setAdminState(isAdmin);
         if (isAdmin) {
           hadAdminSession.current = true;
-          setView((current) => (current === "entry" ? "mypage" : current));
+          // 招待URLの成否が確定するまでは、管理者の自動遷移で画面を上書きしない。
+          if (!initialInvitationToken)
+            setView((current) => (current === "entry" ? "mypage" : current));
         } else if (hadAdminSession.current) {
           hadAdminSession.current = false;
           setAuthNotice(
@@ -674,7 +677,7 @@ function App() {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [initialInvitationToken]);
 
   useEffect(() => {
     if (!authReady || passwordOpen) return;
@@ -715,7 +718,7 @@ function App() {
 
   useEffect(() => {
     if (!authReady || invitationHandled.current) return;
-    const token = readRoomInvitationToken();
+    const token = initialInvitationToken;
     if (!token) return;
 
     invitationHandled.current = true;
@@ -728,7 +731,7 @@ function App() {
         setViewerError("");
         setView("viewer-list");
       } catch (reason) {
-        setAuthNotice(roomViewSessionErrorMessage(reason));
+        setInvitationError(roomViewSessionErrorMessage(reason));
         setView("entry");
       } finally {
         // 成否にかかわらず、bearer token をURL・履歴に残さない。
@@ -736,7 +739,7 @@ function App() {
         setInvitationLoading(false);
       }
     })();
-  }, [authReady]);
+  }, [authReady, initialInvitationToken]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -2330,6 +2333,32 @@ function App() {
             <span className="section-eyebrow">INVITATION</span>
             <h1>招待リンクを確認しています…</h1>
             <p>ルームの閲覧画面を開いています。</p>
+          </section>
+        </div>
+      </main>
+    );
+  if (invitationError)
+    return (
+      <main className="entry-layout">
+        <div className="entry-card">
+          <header className="entry-brand">
+            <div className="brand">
+              <span className="brand-ball">●</span>草野球速報
+            </div>
+          </header>
+          <section className="entry-panel">
+            <span className="section-eyebrow">INVITATION</span>
+            <h1>招待リンクを開けません</h1>
+            <p className="error">{invitationError}</p>
+            <button
+              className="primary-action"
+              onClick={() => {
+                setInvitationError("");
+                setView(admin ? "mypage" : "entry");
+              }}
+            >
+              {admin ? "マイページへ" : "トップへ"}
+            </button>
           </section>
         </div>
       </main>
