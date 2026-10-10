@@ -26,7 +26,7 @@
    `service_role` キー、DB パスワード、アクセストークンはブラウザで実行される Vite 環境変数に書いてはいけません。
 14. 開発サーバーを再起動して `npm run dev` を実行します。ログインしている場合だけ、画面状態は本人用の `app_snapshots` にも保存・復元されます。未ログイン・未設定・通信失敗時は、ブラウザの localStorage にだけ保存されます。
 
-すでに実行済みのマイグレーションは再実行しません。既存プロジェクトへIssue #39を追加する場合は、それ以前のマイグレーションが実行済みであることを確認し、`202610060010_player_statistics.sql` だけをSQL Editorに貼り付けて実行します。2026年10月7日より前の同ファイルを実行済みの場合は、さらに `202610070001_fix_create_owned_game_ambiguity.sql` を実行します。Issue #42を追加する場合は、続けて `202610070002_revert_game_event.sql` を実行します。Issue #56を追加する場合は、[202610110001_room_invitation_links.sql](migrations/202610110001_room_invitation_links.sql) と [202610110002_extend_invitation_view_session.sql](migrations/202610110002_extend_invitation_view_session.sql) を番号順に実行します。シードは既存データを更新しないため、必要な場合だけ実行します。
+すでに実行済みのマイグレーションは再実行しません。既存プロジェクトへIssue #39を追加する場合は、それ以前のマイグレーションが実行済みであることを確認し、`202610060010_player_statistics.sql` だけをSQL Editorに貼り付けて実行します。2026年10月7日より前の同ファイルを実行済みの場合は、さらに `202610070001_fix_create_owned_game_ambiguity.sql` を実行します。Issue #42を追加する場合は、続けて `202610070002_revert_game_event.sql` を実行します。Issue #56を追加する場合は、[202610110001_room_invitation_links.sql](migrations/202610110001_room_invitation_links.sql) と [202610110002_extend_invitation_view_session.sql](migrations/202610110002_extend_invitation_view_session.sql) を番号順に実行します。その後、チーム略称・チーム設定編集を使う場合は [202610110003_team_abbreviations.sql](migrations/202610110003_team_abbreviations.sql) を実行します。シードは既存データを更新しないため、必要な場合だけ実行します。
 
 ## 確認SQL
 

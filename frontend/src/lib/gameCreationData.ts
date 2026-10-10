@@ -9,8 +9,10 @@ export type ExistingRoomForGame = {
 export type GameCreationInput = {
   room: ExistingRoomForGame
   awayName: string
+  awayAbbreviation: string
   awayColor: string
   homeName: string
+  homeAbbreviation: string
   homeColor: string
   scheduledInnings: number
 }
@@ -22,8 +24,8 @@ export type CreatedOwnedGame = {
     title: string
     status: '試合前'
     scheduledInnings: number
-    away: { name: string; color: string; score: number }
-    home: { name: string; color: string; score: number }
+    away: { name: string; abbreviation: string; color: string; score: number }
+    home: { name: string; abbreviation: string; color: string; score: number }
   }
 }
 
@@ -86,6 +88,31 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
     throw new Error('試合作成結果を確認できませんでした。')
   }
 
+  // 同名チームをルーム内で再利用する既存の作成RPCと整合させるため、
+  // 表示用の略称とカラーは作成後にチーム本体へ保存する。
+  const teamConfigurations = [
+    {
+      name: input.awayName.trim(),
+      abbreviation: input.awayAbbreviation.trim(),
+      color: input.awayColor,
+    },
+    {
+      name: input.homeName.trim(),
+      abbreviation: input.homeAbbreviation.trim(),
+      color: input.homeColor,
+    },
+  ]
+  for (const team of teamConfigurations) {
+    const { data: updatedTeams, error: teamError } = await client()
+      .from('teams')
+      .update({ abbreviation: team.abbreviation, color: team.color })
+      .eq('room_id', created.room_id)
+      .eq('name', team.name)
+      .select('id')
+    if (teamError) throw teamError
+    if (!updatedTeams?.length) throw new Error('作成したチームを更新できませんでした。')
+  }
+
   return {
     room: {
       id: created.room_id,
@@ -97,8 +124,39 @@ export async function createOwnedGame(input: GameCreationInput): Promise<Created
       title: created.game_title,
       status: '試合前',
       scheduledInnings: created.scheduled_innings,
-      away: { name: created.away_team_name, color: created.away_team_color, score: 0 },
-      home: { name: created.home_team_name, color: created.home_team_color, score: 0 },
+      away: {
+        name: created.away_team_name,
+        abbreviation: input.awayAbbreviation.trim(),
+        color: input.awayColor,
+        score: 0,
+      },
+      home: {
+        name: created.home_team_name,
+        abbreviation: input.homeAbbreviation.trim(),
+        color: input.homeColor,
+        score: 0,
+      },
     },
   }
+}
+
+export async function updateOwnedTeamConfiguration(input: {
+  roomId: string
+  currentName: string
+  name: string
+  abbreviation: string
+  color: string
+}): Promise<void> {
+  const { data, error } = await client()
+    .from('teams')
+    .update({
+      name: input.name.trim(),
+      abbreviation: input.abbreviation.trim(),
+      color: input.color,
+    })
+    .eq('room_id', input.roomId)
+    .eq('name', input.currentName)
+    .select('id')
+  if (error) throw error
+  if (!data?.length) throw new Error('対象のチームを更新できませんでした。画面を再読み込みしてからもう一度お試しください。')
 }
