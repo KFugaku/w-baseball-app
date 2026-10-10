@@ -9,6 +9,7 @@ export type RoomViewSession = {
   roomNumber?: string
   expiresAt: string
   handoffToken?: string
+  accessMethod: 'password' | 'invitation'
 }
 
 type RoomViewSessionWithHandoff = RoomViewSessionRow & {
@@ -40,13 +41,18 @@ function readSession(): RoomViewSession | null {
   }
 }
 
-function storeSession(row: RoomViewSessionWithHandoff, roomNumber?: string): RoomViewSession {
+function storeSession(
+  row: RoomViewSessionWithHandoff,
+  roomNumber?: string,
+  accessMethod: RoomViewSession['accessMethod'] = 'password',
+): RoomViewSession {
   const session: RoomViewSession = {
     roomId: row.room_id,
     roomName: row.room_name,
     roomNumber,
     expiresAt: row.expires_at,
     handoffToken: row.handoff_token,
+    accessMethod,
   }
   window.sessionStorage.setItem(storageKey, JSON.stringify(session))
   return session
@@ -108,7 +114,7 @@ export async function startRoomViewSession(
     throw new RoomViewSessionError('invalid')
   }
 
-  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber)
+  return storeSession(data[0] as RoomViewSessionWithHandoff, roomNumber, 'password')
 }
 
 /** 招待URLのトークンを一度だけ照合し、同じ閲覧専用セッション形式で保存する。 */
@@ -135,7 +141,7 @@ export async function startRoomViewSessionFromInvitation(
     throw new RoomViewSessionError('invitation')
   }
 
-  return storeSession(data[0] as RoomViewSessionWithHandoff)
+  return storeSession(data[0] as RoomViewSessionWithHandoff, undefined, 'invitation')
 }
 
 /**
@@ -155,6 +161,7 @@ export async function claimRoomViewSession(): Promise<RoomViewSession | null> {
   return storeSession(
     { ...(data[0] as RoomViewSessionRow), handoff_token: current.handoffToken },
     current.roomNumber,
+    current.accessMethod,
   )
 }
 

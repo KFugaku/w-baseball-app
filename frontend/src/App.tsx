@@ -2431,6 +2431,7 @@ function App() {
           games={viewerGames}
           loading={viewerLoading}
           error={viewerError}
+          accessMethod={viewerSession.accessMethod}
           onOpen={openViewerGame}
           onRefresh={refreshViewerGames}
           onExit={exitViewer}
@@ -3117,6 +3118,7 @@ function ViewerGameList({
   games,
   loading,
   error,
+  accessMethod,
   onOpen,
   onRefresh,
   onExit,
@@ -3127,6 +3129,7 @@ function ViewerGameList({
   games: ViewerGame[];
   loading: boolean;
   error: string;
+  accessMethod: RoomViewSession["accessMethod"];
   onOpen: (id: string) => void;
   onRefresh: () => void;
   onExit: () => void;
@@ -3194,7 +3197,7 @@ function ViewerGameList({
           )}
         </section>
         <p className="viewer-session-notice">
-          この閲覧権限は1時間で自動的に終了します。
+          この閲覧権限は{accessMethod === "invitation" ? "7時間" : "1時間"}で自動的に終了します。
         </p>
         <p className="viewer-session-notice">
           <button className="viewer-signout" onClick={onExit}>
