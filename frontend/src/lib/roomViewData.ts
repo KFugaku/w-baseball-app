@@ -12,8 +12,8 @@ export type ViewerGame = {
   title: string;
   status: "試合前" | "速報中" | "試合終了";
   scheduledInnings: number;
-  away: { name: string; color: string; score: number };
-  home: { name: string; color: string; score: number };
+  away: { name: string; abbreviation: string; color: string; score: number };
+  home: { name: string; abbreviation: string; color: string; score: number };
 };
 
 export type ViewerGameDetail = ViewerGame & {
@@ -202,18 +202,21 @@ async function getGameSummaries(
 
   const gameTeams = (gameTeamRows ?? []) as RemoteGameTeam[];
   const teamIds = [...new Set(gameTeams.map((team) => team.team_id))];
-  const teamsById = new Map<string, Pick<TeamRow, "id" | "name" | "color">>();
+  const teamsById = new Map<
+    string,
+    Pick<TeamRow, "id" | "name" | "abbreviation" | "color">
+  >();
 
   if (teamIds.length) {
     const { data: teamRows, error: teamsError } = await client
       .from("teams")
-      .select("id, name, color")
+      .select("id, name, abbreviation, color")
       .in("id", teamIds);
     if (teamsError) throw teamsError;
 
     for (const team of (teamRows ?? []) as Pick<
       TeamRow,
-      "id" | "name" | "color"
+      "id" | "name" | "abbreviation" | "color"
     >[]) {
       teamsById.set(team.id, team);
     }
@@ -230,6 +233,7 @@ async function getGameSummaries(
       const team = gameTeam ? teamsById.get(gameTeam.team_id) : undefined;
       return {
         name: team?.name ?? "未設定",
+        abbreviation: team?.abbreviation ?? "",
         color: team?.color ?? "#708078",
         score: gameTeam?.score ?? 0,
       };
@@ -503,6 +507,7 @@ export async function loadRoomPlayerStatisticSummaries(
 export function subscribeToGameChanges(
   gameId: string,
   onChange: () => void,
+  roomId?: string,
 ): () => void {
   if (!isSupabaseConfigured || !supabase) return () => undefined;
   const client = supabase;
@@ -545,6 +550,16 @@ export function subscribeToGameChanges(
         schema: "public",
         table: "game_events",
         filter: `game_id=eq.${gameId}`,
+      },
+      onChange,
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "teams",
+        ...(roomId ? { filter: `room_id=eq.${roomId}` } : {}),
       },
       onChange,
     )
