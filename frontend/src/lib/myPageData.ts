@@ -1,6 +1,6 @@
 import type { PlayerRow, RoomRow, TeamRow } from '@w-baseball/shared'
 import { loadViewerGames, type ViewerGame } from './roomViewData'
-import { getCurrentUser, isSupabaseConfigured, supabase } from './supabase'
+import { getCurrentUser, isAnonymousUser, isSupabaseConfigured, supabase } from './supabase'
 
 export type OwnedRoom = {
   id: string
@@ -92,7 +92,7 @@ export async function loadOwnedRooms(): Promise<OwnedRoom[]> {
   const client = supabase
 
   const user = await getCurrentUser()
-  if (!user || user.app_metadata?.provider === 'anonymous') {
+  if (!user || isAnonymousUser(user)) {
     throw new Error('ログイン情報を確認できませんでした。')
   }
 

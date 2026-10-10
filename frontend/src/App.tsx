@@ -68,6 +68,7 @@ import {
 import {
   authErrorMessage,
   getCurrentUser,
+  isAnonymousUser,
   isInviteCallback,
   resendSignUpConfirmation,
   signInWithEmail,
@@ -651,7 +652,7 @@ function App() {
     let active = true;
     const applyUser = (user: Awaited<ReturnType<typeof getCurrentUser>>) => {
       if (active) {
-        const isAnonymous = user?.app_metadata?.provider === "anonymous";
+        const isAnonymous = isAnonymousUser(user);
         const isAdmin = Boolean(user) && !isAnonymous;
         setAdminState(isAdmin);
         if (isAdmin) {
@@ -683,7 +684,7 @@ function App() {
     if (!authReady || passwordOpen) return;
     void getCurrentUser().then((user) =>
       setAdminState(
-        Boolean(user) && user?.app_metadata?.provider !== "anonymous",
+        Boolean(user) && !isAnonymousUser(user),
       ),
     );
   }, [authReady, passwordOpen]);

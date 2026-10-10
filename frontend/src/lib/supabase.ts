@@ -39,6 +39,15 @@ export async function getCurrentUser(): Promise<User | null> {
   return data.user
 }
 
+/**
+ * 匿名閲覧のために作成した Auth ユーザーは、メールで登録した管理者とは区別する。
+ * Supabase の公式な識別子 is_anonymous を優先し、以前のセッションとの互換用に
+ * provider も確認する。
+ */
+export function isAnonymousUser(user: User | null | undefined): boolean {
+  return user?.is_anonymous === true || user?.app_metadata?.provider === 'anonymous'
+}
+
 export async function getAccessToken(): Promise<{ accessToken: string; userId: string } | null> {
   if (!supabase) return null
 
