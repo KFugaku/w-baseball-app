@@ -298,6 +298,12 @@ type LineupDropTarget = {
   index: number;
   mode: "insert" | "replace";
 } | null;
+type DefensiveAssignment = {
+  /** 守備位置を確定するチームを、打順どおりに処理する。 */
+  sides: TeamSide[];
+  sideIndex: number;
+};
+const defensivePositions = positions.slice(0, 9);
 const validTeam = (value: unknown): value is Team =>
   value !== null &&
   typeof value === "object" &&
@@ -504,6 +510,9 @@ function App() {
     [drag, setDragState] = useState<DragState>(null),
     [lineupDropTarget, setLineupDropTarget] =
       useState<LineupDropTarget>(null),
+    [defensiveAssignment, setDefensiveAssignment] =
+      useState<DefensiveAssignment | null>(null),
+    [adminPanelOpen, setAdminPanelOpen] = useState(false),
     [pick, setPick] = useState<{
       team: "away" | "home";
       area: "players" | "bench";
@@ -1243,6 +1252,24 @@ function App() {
     fieldingSide: TeamSide = battingSide === "away" ? "home" : "away",
     battingTeam = battingSide === "away" ? away : home,
     fieldingTeam = fieldingSide === "away" ? away : home;
+  const playersMissingDefensivePosition = (side: TeamSide) =>
+    (side === "away" ? away : home).players.filter(
+      (player) =>
+        !player.substitutedOut && !defensivePositions.includes(player.pos),
+    );
+  const defensiveAssignmentSide = defensiveAssignment
+    ? defensiveAssignment.sides[defensiveAssignment.sideIndex]
+    : null;
+  const playerAwaitingDefensivePosition = defensiveAssignmentSide
+    ? playersMissingDefensivePosition(defensiveAssignmentSide)[0] ?? null
+    : null;
+  const requestDefensiveAssignments = (sides: TeamSide[]) => {
+    const requiredSides = sides.filter(
+      (side) => playersMissingDefensivePosition(side).length > 0,
+    );
+    if (requiredSides.length)
+      setDefensiveAssignment({ sides: requiredSides, sideIndex: 0 });
+  };
   const fallbackPlayer: Player = {
     id: "empty",
     last: "未設定",
@@ -1374,6 +1401,15 @@ function App() {
   };
   const startGame = () => {
     if (!canEditGame || !game || !isBeforeGame) return;
+    // 「打」「走」のままの先発選手がいると守備図が成立しないため、
+    // 開始状態へは進めず、まず守備位置の選択を求める。
+    const missingDefenders = (["away", "home"] as TeamSide[]).filter(
+      (side) => playersMissingDefensivePosition(side).length > 0,
+    );
+    if (missingDefenders.length) {
+      requestDefensiveAssignments(missingDefenders);
+      return;
+    }
     setDrag(null);
     setGame((current) =>
       current ? { ...current, status: "速報中" } : current,
@@ -1549,6 +1585,11 @@ function App() {
     setRunners({});
     setRunnerPitchers({});
     setPlays((items) => [`${nextInning}回${nextHalf}`, ...items]);
+    // 代打・代走の選手が次の守備に入る前に、守備位置を必ず確定する。
+    // 複数人いる場合も Lineup の並び順で順番に表示される。
+    requestDefensiveAssignments([
+      nextHalf === "表" ? "home" : "away",
+    ]);
     // 打席結果を5秒間表示してから消す。回の切り替えで別の文言に
     // 上書きしないため、結果を確認してから次の打席へ移れる。
     pendingInningStart.current = null;
@@ -2905,7 +2946,16 @@ function App() {
           <div className="versus">
             <span>VS</span>
             <small>対戦成績</small>
-            <b>{formatMatchupStatistics(visibleMatchupStatistics)}</b>
+            <b className="matchup-statistics">
+              {visibleMatchupStatistics ? (
+                <>
+                  <span>{visibleMatchupStatistics.at_bats}打数</span>
+                  <span>{visibleMatchupStatistics.hits}安打</span>
+                </>
+              ) : (
+                "---"
+              )}
+            </b>
           </div>
           <PlayerCard
             player={pitcher}
@@ -2990,7 +3040,18 @@ function App() {
         />
       </section>
       {canEditGame && (
-        <section className="admin card">
+        <section className={`admin card ${adminPanelOpen ? "admin-panel-expanded" : ""}`}>
+          <button
+            type="button"
+            className="admin-mobile-toggle"
+            aria-expanded={adminPanelOpen}
+            onClick={() => setAdminPanelOpen((open) => !open)}
+          >
+            <span aria-hidden="true">⌃</span>
+            <b>試合を更新</b>
+            <small>{adminPanelOpen ? "閉じる" : "タップして開く"}</small>
+          </button>
+          <div className="admin-panel-content">
           <div className="admin-heading">
             <div>
               <span className="section-eyebrow">ADMIN CONTROLS</span>
@@ -3109,6 +3170,7 @@ function App() {
               </button>
             </div>
           </div>
+          </div>
         </section>
       )}
       {teamSettingsSide && (
@@ -3117,6 +3179,45 @@ function App() {
           order={teamSettingsSide === "away" ? "先攻" : "後攻"}
           close={() => setTeamSettingsSide(null)}
           onSave={(settings) => saveTeamConfiguration(teamSettingsSide, settings)}
+        />
+      )}
+      {playerAwaitingDefensivePosition && defensiveAssignmentSide && (
+        <DefensivePositionModal
+          team={defensiveAssignmentSide === "away" ? away : home}
+          player={playerAwaitingDefensivePosition}
+          onSelect={(position) => {
+            const players =
+              defensiveAssignmentSide === "away" ? away.players : home.players;
+            const playerIndex = players.findIndex(
+              (player) => player.id === playerAwaitingDefensivePosition.id,
+            );
+            if (playerIndex >= 0) {
+              const playersAfterSelection = players.map((player, index) =>
+                index === playerIndex ? { ...player, pos: position } : player,
+              );
+              // このチームの未設定者をすべて処理したら、次のチームへ進む。
+              // まだ残っていれば同じ sideIndex のまま、打順が早い選手を表示する。
+              if (
+                !playersAfterSelection.some(
+                  (player) =>
+                    !player.substitutedOut &&
+                    !defensivePositions.includes(player.pos),
+                )
+              )
+                setDefensiveAssignment((current) => {
+                  if (!current) return current;
+                  return current.sideIndex + 1 < current.sides.length
+                    ? { ...current, sideIndex: current.sideIndex + 1 }
+                    : null;
+                });
+              changePosition(
+                defensiveAssignmentSide,
+                "players",
+                playerIndex,
+                position,
+              );
+            }
+          }}
         />
       )}
       <AuthModal
@@ -4101,6 +4202,45 @@ function TeamSettingsModal({
     </div>
   );
 }
+function DefensivePositionModal({
+  team,
+  player,
+  onSelect,
+}: {
+  team: Team;
+  player: Player;
+  onSelect: (position: string) => void;
+}) {
+  const occupied = new Set(
+    team.players
+      .filter((candidate) => candidate.id !== player.id)
+      .map((candidate) => candidate.pos),
+  );
+  return (
+    <div className="modal-backdrop forced-defense-backdrop" role="dialog" aria-modal="true" aria-labelledby="defensive-position-title">
+      <section className="picker forced-defense-picker">
+        <span className="section-eyebrow">DEFENSIVE SETUP</span>
+        <h2 id="defensive-position-title">守備を設定してください</h2>
+        <p>
+          {team.name}・{player.last} {player.first} の守備位置を選択してください。
+        </p>
+        <div className="defensive-position-choices">
+          {defensivePositions.map((position) => (
+            <button
+              type="button"
+              key={position}
+              disabled={occupied.has(position)}
+              onClick={() => onSelect(position)}
+            >
+              {position}
+            </button>
+          ))}
+        </div>
+        <small>未設定の選手がいるため、守備位置を確定するまで試合を進められません。</small>
+      </section>
+    </div>
+  );
+}
 function InningHistory({
   plays,
   currentInningLabel,
@@ -4321,11 +4461,6 @@ function formatBattingAverage(value: number | null | undefined) {
   if (value === null || value === undefined) return "---";
   const formatted = value.toFixed(3);
   return value < 1 ? formatted.replace(/^0/, "") : formatted;
-}
-
-function formatMatchupStatistics(statistics: PlayerMatchupStatistics | null) {
-  if (!statistics) return "---";
-  return `${statistics.at_bats}打数 ${statistics.hits}安打`;
 }
 
 function formatEarnedRunAverage(value: number | null | undefined) {
